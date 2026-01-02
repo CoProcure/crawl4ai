@@ -39,4 +39,4 @@ class TestNormalizeUrl:
         assert normalize_url("?query=true", "http://example.com/page.html") == "http://example.com/page.html?query=true"
 
     def test_href_with_special_characters(self):
-        assert normalize_url("path%20with%20spaces/file.html", "http://example.com/") == "http://example.com/path%20with%20spaces/file.html"
+        assert normalize_url("path with spaces/file.html", "http://example.com/") == "http://example.com/path%20with%20spaces/file.html"
