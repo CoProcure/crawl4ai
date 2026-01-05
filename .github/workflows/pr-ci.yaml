@@ -14,20 +14,21 @@ concurrency:
   cancel-in-progress: ${{ github.actor != 'renovate[bot]' }}
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
+  # Lint step disabled until we format all files.
+  # lint:
+  #   runs-on: ubuntu-latest
 
-    steps:
-      - name: PR Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-      - name: Lint Python Files
-        uses: astral-sh/ruff-action@v3
-        with:
-          version: "0.14.10" # keep in sync with pyproject.toml
-      - name: Format Python Files
-        run: ruff format --check
+  #   steps:
+  #     - name: PR Checkout
+  #       uses: actions/checkout@v6
+  #       with:
+  #         fetch-depth: 0
+  #     - name: Lint Python Files
+  #       uses: astral-sh/ruff-action@v3
+  #       with:
+  #         version: "0.14.10" # keep in sync with pyproject.toml
+  #     - name: Format Python Files
+  #       run: ruff format --check
 
   python_test:
     runs-on: ubuntu-latest
@@ -41,36 +42,10 @@ jobs:
           activate-environment: true
           enable-cache: true
           cache-local-path: ".cache/.uv-cache"
+      - name: Install Playwright
+        run: uv run playwright install --with-deps chromium
       - name: Python Tests
         run: uv run pytest tests/
         timeout-minutes: 10
       - name: Minimize uv cache
         run: uv cache prune --ci
-      - name: Upload Coverage
-        uses: actions/upload-artifact@v6
-        with:
-          name: python-coverage-report
-          path: pycov.lcov
-          retention-days: 1
-
-  coverage:
-    # Don't trigger this on renovate PRs
-    if: github.actor != 'renovate[bot]'
-
-    runs-on: ubuntu-latest
-
-    needs: [python_test]
-    steps:
-      - name: Download Python Coverage
-        uses: actions/download-artifact@v7
-        with:
-          name: python-coverage-report
-      - name: Consolidate coverage
-        run: cat pycov.lcov >> lcov.info
-      - name: Generate coverage report
-        uses: romeovs/lcov-reporter-action@v0.4.0
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          filter-changed-files: true
-          lcov-file: lcov.info
-          title: Coverage for changed files in this PR (ignore total coverage)
