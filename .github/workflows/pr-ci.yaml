@@ -16,7 +16,7 @@ concurrency:
 jobs:
   # Lint step disabled until we format all files.
   # lint:
-  #   runs-on: ubuntu-latest
+  #   runs-on: ubuntu-24.04
 
   #   steps:
   #     - name: PR Checkout
@@ -31,7 +31,7 @@ jobs:
   #       run: ruff format --check
 
   python_test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
       - name: PR Checkout
