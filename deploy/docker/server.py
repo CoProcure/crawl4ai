@@ -265,6 +265,9 @@ async def generate_html(
     Crawls the URL, preprocesses the raw HTML for schema extraction, and returns the processed HTML.
     Use when you need sanitized HTML structures for building schemas or further processing.
     """
+    if not body.url.startswith(("http://", "https://", "raw:", "raw://")):
+        raise HTTPException(
+            400, "Invalid URL format. Must start with http://, https://, or raw:")
     cfg = CrawlerRunConfig()
     async with AsyncWebCrawler(config=BrowserConfig()) as crawler:
         results = await crawler.arun(url=body.url, config=cfg)
@@ -289,6 +292,9 @@ async def generate_screenshot(
     Use when you need an image snapshot of the rendered page. Its recommened to provide an output path to save the screenshot.
     Then in result instead of the screenshot you will get a path to the saved file.
     """
+    if not body.url.startswith(("http://", "https://", "raw:", "raw://")):
+        raise HTTPException(
+            400, "Invalid URL format. Must start with http://, https://, or raw:")
     cfg = CrawlerRunConfig(
         screenshot=True, screenshot_wait_for=body.screenshot_wait_for)
     async with AsyncWebCrawler(config=BrowserConfig()) as crawler:
@@ -318,6 +324,9 @@ async def generate_pdf(
     Use when you need a printable or archivable snapshot of the page. It is recommended to provide an output path to save the PDF.
     Then in result instead of the PDF you will get a path to the saved file.
     """
+    if not body.url.startswith(("http://", "https://", "raw:", "raw://")):
+        raise HTTPException(
+            400, "Invalid URL format. Must start with http://, https://, or raw:")
     cfg = CrawlerRunConfig(pdf=True)
     async with AsyncWebCrawler(config=BrowserConfig()) as crawler:
         results = await crawler.arun(url=body.url, config=cfg)
@@ -384,6 +393,9 @@ async def execute_js(
         ```
 
     """
+    if not body.url.startswith(("http://", "https://", "raw:", "raw://")):
+        raise HTTPException(
+            400, "Invalid URL format. Must start with http://, https://, or raw:")
     cfg = CrawlerRunConfig(js_code=body.scripts)
     async with AsyncWebCrawler(config=BrowserConfig()) as crawler:
         results = await crawler.arun(url=body.url, config=cfg)

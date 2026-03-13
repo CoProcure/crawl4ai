@@ -1040,10 +1040,48 @@ class JsonElementExtractionStrategy(ExtractionStrategy):
             return value.strip()
         return value
 
+    @staticmethod
+    def _safe_eval(expression: str, item: dict):
+        """Evaluate a restricted arithmetic/attribute expression without
+        allowing arbitrary code execution.  Only simple names, attribute
+        access, subscripts, comparisons, boolean ops, arithmetic, and
+        string operations are permitted — no calls, imports, or
+        comprehensions.
+
+        This closes CVE-2026-26216 by replacing the unrestricted
+        ``eval()`` that previously ran here.
+        """
+        import ast as _ast
+
+        _SAFE_NODES = (
+            _ast.Expression, _ast.BoolOp, _ast.BinOp, _ast.UnaryOp,
+            _ast.IfExp, _ast.Compare,
+            _ast.Constant, _ast.Attribute, _ast.Subscript, _ast.Name,
+            _ast.Load, _ast.Slice, _ast.Index,  # Index for older Pythons
+            _ast.Add, _ast.Sub, _ast.Mult, _ast.Div, _ast.FloorDiv,
+            _ast.Mod, _ast.Pow,
+            _ast.And, _ast.Or, _ast.Not,
+            _ast.Eq, _ast.NotEq, _ast.Lt, _ast.LtE, _ast.Gt, _ast.GtE,
+            _ast.Is, _ast.IsNot, _ast.In, _ast.NotIn,
+            _ast.USub, _ast.UAdd,
+            _ast.Tuple, _ast.List,
+            _ast.JoinedStr, _ast.FormattedValue,  # f-strings
+        )
+
+        tree = _ast.parse(expression, mode="eval")
+        for node in _ast.walk(tree):
+            if not isinstance(node, _SAFE_NODES):
+                raise ValueError(
+                    f"Disallowed expression node: {type(node).__name__}"
+                )
+
+        code = compile(tree, "<expression>", "eval")
+        return eval(code, {"__builtins__": {}}, item)  # noqa: S307
+
     def _compute_field(self, item, field):
         try:
             if "expression" in field:
-                return eval(field["expression"], {}, item)
+                return self._safe_eval(field["expression"], item)
             if "function" in field:
                 return field["function"](item)
         except Exception as e:
