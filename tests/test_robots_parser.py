@@ -63,7 +63,6 @@ Allow: /*default*/s/
 # Directories
 Disallow: /_user_controls
 Disallow: /admin
-
 """
     )
 

@@ -30,9 +30,6 @@ from urllib.parse import (
     urlunparse,
 )
 
-# Monkey patch to fix wildcard handling in urllib.robotparser
-from urllib.robotparser import RobotFileParser, RuleLine
-
 import aiohttp
 import httpx
 import lxml
@@ -43,6 +40,7 @@ from bs4 import BeautifulSoup
 from lxml import etree
 from lxml import html as lhtml
 from packaging import version
+from protego import Protego
 
 from crawl4ai.cache_client import (
     DEFAULT_CACHE_TTL_SECONDS,
@@ -56,25 +54,6 @@ from .config import (
     PROVIDER_MODELS,
 )
 from .prompts import PROMPT_EXTRACT_BLOCKS
-
-original_applies_to = RuleLine.applies_to
-
-def patched_applies_to(self, filename):
-    # Handle wildcards in paths
-    if "*" in self.path or "%2A" in self.path or self.path in ("*", "%2A"):
-        pattern = re.sub(r"(%2A|\*)+", ".*", self.path)
-        pattern = "^" + pattern
-        if pattern.endswith("\\$"):
-            pattern = pattern[:-2] + "$"
-        try:
-            return bool(re.match(pattern, filename))
-        except re.error:
-            return original_applies_to(self, filename)
-    return original_applies_to(self, filename)
-
-
-RuleLine.applies_to = patched_applies_to
-# Monkey patch ends
 
 
 def chunk_documents(
@@ -317,14 +296,8 @@ class RobotsParser:
                 return True
 
         # Create parser for this check
-        parser = RobotFileParser()
-        parser.parse(rules.splitlines())
-
-        # If parser can't read rules, allow access
-        if not parser.mtime():
-            return True
-
-        return parser.can_fetch(user_agent, url)
+        parser = Protego.parse(rules)
+        return parser.can_fetch(url, user_agent)
 
 
 class InvalidCSSSelectorError(Exception):
