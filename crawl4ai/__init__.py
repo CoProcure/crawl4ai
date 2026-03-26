@@ -45,7 +45,6 @@ from .chunking_strategy import ChunkingStrategy, RegexChunking
 from .components.crawler_monitor import CrawlerMonitor
 from .content_filter_strategy import (
     BM25ContentFilter,
-    LLMContentFilter,
     PruningContentFilter,
     RelevantContentFilter,
 )
@@ -81,7 +80,6 @@ from .extraction_strategy import (
     JsonCssExtractionStrategy,
     JsonLxmlExtractionStrategy,
     JsonXPathExtractionStrategy,
-    LLMExtractionStrategy,
     RegexExtractionStrategy,
 )
 from .link_preview import LinkPreview
@@ -99,7 +97,6 @@ from .script import compile_file as c4a_compile_file
 from .script import validate as c4a_validate
 from .table_extraction import (
     DefaultTableExtraction,
-    LLMTableExtraction,
     NoTableExtraction,
     TableExtractionStrategy,
 )
@@ -151,7 +148,6 @@ __all__ = [
     "CrawlerRunConfig",
     "HTTPCrawlerConfig",
     "ExtractionStrategy",
-    "LLMExtractionStrategy",
     "CosineStrategy",
     "JsonCssExtractionStrategy",
     "JsonXPathExtractionStrategy",
@@ -166,7 +162,6 @@ __all__ = [
     "RelevantContentFilter",
     "PruningContentFilter",
     "BM25ContentFilter",
-    "LLMContentFilter",
     "BaseDispatcher",
     "MemoryAdaptiveDispatcher",
     "SemaphoreDispatcher",
@@ -196,29 +191,6 @@ __all__ = [
 ]
 
 
-# def is_sync_version_installed():
-#     try:
-#         import selenium # noqa
-
-#         return True
-#     except ImportError:
-#         return False
-
-
-# if is_sync_version_installed():
-#     try:
-#         from .web_crawler import WebCrawler
-
-#         __all__.append("WebCrawler")
-#     except ImportError:
-#         print(
-#             "Warning: Failed to import WebCrawler even though selenium is installed. This might be due to other missing dependencies."
-#         )
-# else:
-#     WebCrawler = None
-#     # import warnings
-#     # print("Warning: Synchronous WebCrawler is not available. Install crawl4ai[sync] for synchronous support. However, please note that the synchronous version will be deprecated soon.")
 
 # Disable all Pydantic warnings
 warnings.filterwarnings("ignore", module="pydantic")
-# pydantic_warnings.filter_warnings()

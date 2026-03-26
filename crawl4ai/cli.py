@@ -19,7 +19,6 @@ from crawl4ai import (
     CrawlResult,
     BrowserConfig, 
     CrawlerRunConfig,
-    LLMExtractionStrategy, 
     LXMLWebScrapingStrategy,
     JsonCssExtractionStrategy,
     JsonXPathExtractionStrategy,
@@ -27,13 +26,11 @@ from crawl4ai import (
     PruningContentFilter,
     BrowserProfiler,
     DefaultMarkdownGenerator,
-    LLMConfig,
     BFSDeepCrawlStrategy,
     DFSDeepCrawlStrategy,
     BestFirstCrawlingStrategy,
 )
 from crawl4ai.config import USER_SETTINGS
-from litellm import completion
 from pathlib import Path
 
 
@@ -55,53 +52,6 @@ def save_global_config(config: dict):
     config_file = Path.home() / ".crawl4ai" / "global.yml"
     with open(config_file, "w") as f:
         yaml.dump(config, f)
-
-def setup_llm_config() -> tuple[str, str]:
-    config = get_global_config()
-    provider = config.get("DEFAULT_LLM_PROVIDER")
-    token = config.get("DEFAULT_LLM_PROVIDER_TOKEN")
-    
-    if not provider:
-        click.echo("\nNo default LLM provider configured.")
-        click.echo("Provider format: 'company/model' (e.g., 'openai/gpt-4o', 'anthropic/claude-3-sonnet')")
-        click.echo("See available providers at: https://docs.litellm.ai/docs/providers")
-        provider = click.prompt("Enter provider")
-        
-    if not provider.startswith("ollama/"):
-        if not token:
-            token = click.prompt("Enter API token for " + provider, hide_input=True)
-    else:
-        token = "no-token"
-    
-    if not config.get("DEFAULT_LLM_PROVIDER") or not config.get("DEFAULT_LLM_PROVIDER_TOKEN"):
-        config["DEFAULT_LLM_PROVIDER"] = provider
-        config["DEFAULT_LLM_PROVIDER_TOKEN"] = token
-        save_global_config(config)
-        click.echo("\nConfiguration saved to ~/.crawl4ai/global.yml")
-    
-    return provider, token
-
-async def stream_llm_response(url: str, markdown: str, query: str, provider: str, token: str):
-    response = completion(
-        model=provider,
-        api_key=token,
-        messages=[
-            {
-                "content": f"You are Crawl4ai assistant, answering user question based on the provided context which is crawled from {url}.",
-                "role": "system"
-            },
-            {
-                "content": f"<|start of context|>\n{markdown}\n<|end of context|>\n\n{query}",
-                "role": "user"
-            },
-        ],
-        stream=True,
-    )
-    
-    for chunk in response:
-        if content := chunk["choices"][0]["delta"].get("content"):
-            print(content, end="", flush=True)
-    print()  # New line at end
 
 
 
@@ -316,43 +266,7 @@ llm_schema.json:
 
 For more documentation visit: https://github.com/unclecode/crawl4ai
 
-8️⃣  Q&A with LLM:
-    # Ask a question about the content
-    crwl https://example.com -q "What is the main topic discussed?"
-
-    # First view content, then ask questions
-    crwl https://example.com -o markdown  # See the crawled content first
-    crwl https://example.com -q "Summarize the key points"
-    crwl https://example.com -q "What are the conclusions?"
-
-    # Advanced crawling with Q&A
-    crwl https://example.com \\
-        -B browser.yml \\
-        -c "css_selector=article,scan_full_page=true" \\
-        -q "What are the pros and cons mentioned?"
-
-    Note: First time using -q will prompt for LLM provider and API token.
-    These will be saved in ~/.crawl4ai/global.yml for future use.
-    
-    Supported provider format: 'company/model'
-    Examples:
-      - ollama/llama3.3
-      - openai/gpt-4
-      - anthropic/claude-3-sonnet
-      - cohere/command
-      - google/gemini-pro
-    
-    See full list of providers: https://docs.litellm.ai/docs/providers
-    
-    # Set default LLM provider and token in advance
-    crwl config set DEFAULT_LLM_PROVIDER "anthropic/claude-3-sonnet"
-    crwl config set DEFAULT_LLM_PROVIDER_TOKEN "your-api-token-here"
-    
-    # Set default browser behavior
-    crwl config set BROWSER_HEADLESS false  # Always show browser window
-    crwl config set USER_AGENT_MODE random  # Use random user agent
-
-9️⃣ Profile Management:
+8️⃣ Profile Management:
     # Launch interactive profile manager
     crwl profiles
 
@@ -1007,21 +921,19 @@ def cdp_cmd(user_data_dir: Optional[str], port: int, browser_type: str, headless
 @click.option("--crawler-config", "-C", type=click.Path(exists=True), help="Crawler config file (YAML/JSON)")
 @click.option("--filter-config", "-f", type=click.Path(exists=True), help="Content filter config file")
 @click.option("--extraction-config", "-e", type=click.Path(exists=True), help="Extraction strategy config file")
-@click.option("--json-extract", "-j", is_flag=False, flag_value="", default=None, help="Extract structured data using LLM with optional description")
 @click.option("--schema", "-s", type=click.Path(exists=True), help="JSON schema for extraction")
 @click.option("--browser", "-b", type=str, callback=parse_key_values, help="Browser parameters as key1=value1,key2=value2")
 @click.option("--crawler", "-c", type=str, callback=parse_key_values, help="Crawler parameters as key1=value1,key2=value2")
 @click.option("--output", "-o", type=click.Choice(["all", "json", "markdown", "md", "markdown-fit", "md-fit"]), default="all")
 @click.option("--output-file", "-O", type=click.Path(), help="Output file path (default: stdout)")
 @click.option("--bypass-cache", "-bc", is_flag=True, default=True, help="Bypass cache when crawling")
-@click.option("--question", "-q", help="Ask a question about the crawled content")
 @click.option("--verbose", "-v", is_flag=True)
 @click.option("--profile", "-p", help="Use a specific browser profile (by name)")
 @click.option("--deep-crawl", type=click.Choice(["bfs", "dfs", "best-first"]), help="Enable deep crawling with specified strategy (bfs, dfs, or best-first)")
 @click.option("--max-pages", type=int, default=10, help="Maximum number of pages to crawl in deep crawl mode")
-def crawl_cmd(url: str, browser_config: str, crawler_config: str, filter_config: str, 
-           extraction_config: str, json_extract: str, schema: str, browser: Dict, crawler: Dict,
-           output: str, output_file: str, bypass_cache: bool, question: str, verbose: bool, profile: str, deep_crawl: str, max_pages: int):
+def crawl_cmd(url: str, browser_config: str, crawler_config: str, filter_config: str,
+           extraction_config: str, schema: str, browser: Dict, crawler: Dict,
+           output: str, output_file: str, bypass_cache: bool, verbose: bool, profile: str, deep_crawl: str, max_pages: int):
     """Crawl a website and extract content
     
     Simple Usage:
@@ -1090,62 +1002,18 @@ def crawl_cmd(url: str, browser_config: str, crawler_config: str, filter_config:
                     )
                 )
         
-        # Handle json-extract option (takes precedence over extraction-config)
-        if json_extract is not None:
-            # Get LLM provider and token
-            provider, token = setup_llm_config()
-            
-            # Default sophisticated instruction for structured data extraction
-            default_instruction = """Analyze the web page content and extract structured data as JSON. 
-If the page contains a list of items with repeated patterns, extract all items in an array. 
-If the page is an article or contains unique content, extract a comprehensive JSON object with all relevant information.
-Look at the content, intention of content, what it offers and find the data item(s) in the page.
-Always return valid, properly formatted JSON."""
-            
-            
-            default_instruction_with_user_query = """Analyze the web page content and extract structured data as JSON, following the below instruction and explanation of schema and always return valid, properly formatted JSON. \n\nInstruction:\n\n""" + json_extract
-            
-            # Determine instruction based on whether json_extract is empty or has content
-            instruction = default_instruction_with_user_query if json_extract else default_instruction
-            
-            # Create LLM extraction strategy
-            crawler_cfg.extraction_strategy = LLMExtractionStrategy(
-                llm_config=LLMConfig(provider=provider, api_token=token),
-                instruction=instruction,
-                schema=load_schema_file(schema),  # Will be None if no schema is provided
-                extraction_type="schema", #if schema else "block",
-                apply_chunking=False,
-                force_json_response=True,
-                verbose=verbose,
-            )
-            
-            # Set output to JSON if not explicitly specified
-            if output == "all":
-                output = "json"
-                
-        # Handle extraction strategy from config file (only if json-extract wasn't used)
-        elif extraction_config:
+        # Handle extraction strategy from config file
+        if extraction_config:
             extract_conf = load_config_file(extraction_config)
             schema_data = load_schema_file(schema)
-            
+
             # Check if type does not exist show proper message
             if not extract_conf.get("type"):
                 raise click.ClickException("Extraction type not specified")
-            if extract_conf["type"] not in ["llm", "json-css", "json-xpath"]:
+            if extract_conf["type"] not in ["json-css", "json-xpath"]:
                 raise click.ClickException(f"Invalid extraction type: {extract_conf['type']}")
-            
-            if extract_conf["type"] == "llm":
-                # if no provider show error emssage
-                if not extract_conf.get("provider") or not extract_conf.get("api_token"):
-                    raise click.ClickException("LLM provider and API token are required for LLM extraction")
 
-                crawler_cfg.extraction_strategy = LLMExtractionStrategy(
-                    llm_config=LLMConfig(provider=extract_conf["provider"], api_token=extract_conf["api_token"]),
-                    instruction=extract_conf["instruction"],
-                    schema=schema_data,
-                    **extract_conf.get("params", {})
-                )
-            elif extract_conf["type"] == "json-css":
+            if extract_conf["type"] == "json-css":
                 crawler_cfg.extraction_strategy = JsonCssExtractionStrategy(
                     schema=schema_data
                 )
@@ -1209,13 +1077,6 @@ Always return valid, properly formatted JSON."""
             main_result = result
             all_results = [result]
 
-        # Handle question
-        if question:
-            provider, token = setup_llm_config()
-            markdown = main_result.markdown.raw_markdown
-            anyio.run(stream_llm_response, url, markdown, question, provider, token)
-            return
-        
         # Handle output
         if not output_file:
             if output == "all":
@@ -1392,20 +1253,18 @@ def profiles_cmd():
 @click.option("--crawler-config", "-C", type=click.Path(exists=True), help="Crawler config file (YAML/JSON)")
 @click.option("--filter-config", "-f", type=click.Path(exists=True), help="Content filter config file")
 @click.option("--extraction-config", "-e", type=click.Path(exists=True), help="Extraction strategy config file")
-@click.option("--json-extract", "-j", is_flag=False, flag_value="", default=None, help="Extract structured data using LLM with optional description")
 @click.option("--schema", "-s", type=click.Path(exists=True), help="JSON schema for extraction")
 @click.option("--browser", "-b", type=str, callback=parse_key_values, help="Browser parameters as key1=value1,key2=value2")
 @click.option("--crawler", "-c", type=str, callback=parse_key_values, help="Crawler parameters as key1=value1,key2=value2")
 @click.option("--output", "-o", type=click.Choice(["all", "json", "markdown", "md", "markdown-fit", "md-fit"]), default="all")
 @click.option("--bypass-cache", is_flag=True, default=True, help="Bypass cache when crawling")
-@click.option("--question", "-q", help="Ask a question about the crawled content")
 @click.option("--verbose", "-v", is_flag=True)
 @click.option("--profile", "-p", help="Use a specific browser profile (by name)")
 @click.option("--deep-crawl", type=click.Choice(["bfs", "dfs", "best-first"]), help="Enable deep crawling with specified strategy")
 @click.option("--max-pages", type=int, default=10, help="Maximum number of pages to crawl in deep crawl mode")
-def default(url: str, example: bool, browser_config: str, crawler_config: str, filter_config: str, 
-        extraction_config: str, json_extract: str, schema: str, browser: Dict, crawler: Dict,
-        output: str, bypass_cache: bool, question: str, verbose: bool, profile: str, deep_crawl: str, max_pages: int):
+def default(url: str, example: bool, browser_config: str, crawler_config: str, filter_config: str,
+        extraction_config: str, schema: str, browser: Dict, crawler: Dict,
+        output: str, bypass_cache: bool, verbose: bool, profile: str, deep_crawl: str, max_pages: int):
     """Crawl4AI CLI - Web content extraction tool
 
     Simple Usage:
@@ -1447,13 +1306,11 @@ def default(url: str, example: bool, browser_config: str, crawler_config: str, f
         crawler_config=crawler_config,
         filter_config=filter_config,
         extraction_config=extraction_config,
-        json_extract=json_extract,
         schema=schema,
         browser=browser,
         crawler=crawler,
         output=output,
         bypass_cache=bypass_cache,
-        question=question,
         verbose=verbose,
         profile=profile,
         deep_crawl=deep_crawl,

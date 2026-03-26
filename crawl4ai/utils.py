@@ -14,7 +14,7 @@ import traceback
 from array import array
 from collections import deque
 from collections.abc import Callable, Generator, Iterable, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache, wraps
 from itertools import chain
 from pathlib import Path
@@ -49,11 +49,6 @@ from crawl4ai.cache_client import (
 )
 
 from . import __version__
-from .config import (
-    DEFAULT_PROVIDER,
-    PROVIDER_MODELS,
-)
-from .prompts import PROMPT_EXTRACT_BLOCKS
 
 
 def chunk_documents(
@@ -1170,212 +1165,6 @@ def extract_xml_data(tags, string):
     return data
 
 
-def perform_completion_with_backoff(
-    provider,
-    prompt_with_variables,
-    api_token,
-    json_response=False,
-    base_url=None,
-    **kwargs,
-):
-    """
-    Perform an API completion request with exponential backoff.
-
-    How it works:
-    1. Sends a completion request to the API.
-    2. Retries on rate-limit errors with exponential delays.
-    3. Returns the API response or an error after all retries.
-
-    Args:
-        provider (str): The name of the API provider.
-        prompt_with_variables (str): The input prompt for the completion request.
-        api_token (str): The API token for authentication.
-        json_response (bool): Whether to request a JSON response. Defaults to False.
-        base_url (Optional[str]): The base URL for the API. Defaults to None.
-        **kwargs: Additional arguments for the API request.
-
-    Returns:
-        dict: The API response or an error message after all retries.
-    """
-
-    from litellm import completion
-    from litellm.exceptions import RateLimitError
-
-    max_attempts = 3
-    base_delay = 2  # Base delay in seconds, you can adjust this based on your needs
-
-    extra_args = {"temperature": 0.01, "api_key": api_token, "base_url": base_url}
-    if json_response:
-        extra_args["response_format"] = {"type": "json_object"}
-
-    if kwargs.get("extra_args"):
-        extra_args.update(kwargs["extra_args"])
-
-    for attempt in range(max_attempts):
-        try:
-            response = completion(
-                model=provider,
-                messages=[{"role": "user", "content": prompt_with_variables}],
-                **extra_args,
-            )
-            return response  # Return the successful response
-        except RateLimitError as e:
-            print("Rate limit error:", str(e))
-
-            # Check if we have exhausted our max attempts
-            if attempt < max_attempts - 1:
-                # Calculate the delay and wait
-                delay = base_delay * (2**attempt)  # Exponential backoff formula
-                print(f"Waiting for {delay} seconds before retrying...")
-                time.sleep(delay)
-            else:
-                # Return an error response after exhausting all retries
-                return [
-                    {
-                        "index": 0,
-                        "tags": ["error"],
-                        "content": ["Rate limit error. Please try again later."],
-                    }
-                ]
-        except Exception as e:
-            raise e  # Raise any other exceptions immediately
-            # print("Error during completion request:", str(e))
-            # error_message = e.message
-            # return [
-            #     {
-            #         "index": 0,
-            #         "tags": ["error"],
-            #         "content": [
-            #             f"Error during LLM completion request. {error_message}"
-            #         ],
-            #     }
-            # ]
-
-
-def extract_blocks(url, html, provider=DEFAULT_PROVIDER, api_token=None, base_url=None):
-    """
-    Extract content blocks from website HTML using an AI provider.
-
-    How it works:
-    1. Prepares a prompt by sanitizing and escaping HTML.
-    2. Sends the prompt to an AI provider with optional retries.
-    3. Parses the response to extract structured blocks or errors.
-
-    Args:
-        url (str): The website URL.
-        html (str): The HTML content of the website.
-        provider (str): The AI provider for content extraction. Defaults to DEFAULT_PROVIDER.
-        api_token (Optional[str]): The API token for authentication. Defaults to None.
-        base_url (Optional[str]): The base URL for the API. Defaults to None.
-
-    Returns:
-        List[dict]: A list of extracted content blocks.
-    """
-
-    # api_token = os.getenv('GROQ_API_KEY', None) if not api_token else api_token
-    api_token = PROVIDER_MODELS.get(provider, None) if not api_token else api_token
-
-    variable_values = {
-        "URL": url,
-        "HTML": escape_json_string(sanitize_html(html)),
-    }
-
-    prompt_with_variables = PROMPT_EXTRACT_BLOCKS
-    for variable in variable_values:
-        prompt_with_variables = prompt_with_variables.replace(
-            "{" + variable + "}", variable_values[variable]
-        )
-
-    response = perform_completion_with_backoff(
-        provider, prompt_with_variables, api_token, base_url=base_url
-    )
-
-    try:
-        blocks = extract_xml_data(["blocks"], response.choices[0].message.content)[
-            "blocks"
-        ]
-        blocks = json.loads(blocks)
-        ## Add error: False to the blocks
-        for block in blocks:
-            block["error"] = False
-    except Exception:
-        parsed, unparsed = split_and_parse_json_objects(
-            response.choices[0].message.content
-        )
-        blocks = parsed
-        # Append all unparsed segments as onr error block and content is list of unparsed segments
-        if unparsed:
-            blocks.append(
-                {"index": 0, "error": True, "tags": ["error"], "content": unparsed}
-            )
-    return blocks
-
-
-def extract_blocks_batch(batch_data, provider="groq/llama3-70b-8192", api_token=None):
-    """
-    Extract content blocks from a batch of website HTMLs.
-
-    How it works:
-    1. Prepares prompts for each URL and HTML pair.
-    2. Sends the prompts to the AI provider in a batch request.
-    3. Parses the responses to extract structured blocks or errors.
-
-    Args:
-        batch_data (List[Tuple[str, str]]): A list of (URL, HTML) pairs.
-        provider (str): The AI provider for content extraction. Defaults to "groq/llama3-70b-8192".
-        api_token (Optional[str]): The API token for authentication. Defaults to None.
-
-    Returns:
-        List[dict]: A list of extracted content blocks from all batch items.
-    """
-
-    api_token = os.getenv("GROQ_API_KEY", None) if not api_token else api_token
-    from litellm import batch_completion
-
-    messages = []
-
-    for url, _html in batch_data:
-        variable_values = {
-            "URL": url,
-            "HTML": _html,
-        }
-
-        prompt_with_variables = PROMPT_EXTRACT_BLOCKS
-        for variable in variable_values:
-            prompt_with_variables = prompt_with_variables.replace(
-                "{" + variable + "}", variable_values[variable]
-            )
-
-        messages.append([{"role": "user", "content": prompt_with_variables}])
-
-    responses = batch_completion(model=provider, messages=messages, temperature=0.01)
-
-    all_blocks = []
-    for response in responses:
-        try:
-            blocks = extract_xml_data(["blocks"], response.choices[0].message.content)[
-                "blocks"
-            ]
-            blocks = json.loads(blocks)
-
-        except Exception:
-            blocks = [
-                {
-                    "index": 0,
-                    "tags": ["error"],
-                    "content": [
-                        "Error extracting blocks from the HTML content. Choose another provider/model or try again."
-                    ],
-                    "questions": [
-                        "What went wrong during the block extraction process?"
-                    ],
-                }
-            ]
-        all_blocks.append(blocks)
-
-    return sum(all_blocks, [])
-
-
 def merge_chunks_based_on_token_threshold(chunks, token_threshold):
     """
     Merges small chunks into larger ones based on the total token threshold.
@@ -1406,51 +1195,6 @@ def merge_chunks_based_on_token_threshold(chunks, token_threshold):
         merged_sections.append("\n\n".join(current_chunk))
 
     return merged_sections
-
-
-def process_sections(
-    url: str, sections: list, provider: str, api_token: str, base_url=None
-) -> list:
-    """
-    Process sections of HTML content sequentially or in parallel.
-
-    How it works:
-    1. Sequentially processes sections with delays for "groq/" providers.
-    2. Uses ThreadPoolExecutor for parallel processing with other providers.
-    3. Extracts content blocks for each section.
-
-    Args:
-        url (str): The website URL.
-        sections (List[str]): The list of HTML sections to process.
-        provider (str): The AI provider for content extraction.
-        api_token (str): The API token for authentication.
-        base_url (Optional[str]): The base URL for the API. Defaults to None.
-
-    Returns:
-        List[dict]: The list of extracted content blocks from all sections.
-    """
-
-    extracted_content = []
-    if provider.startswith("groq/"):
-        # Sequential processing with a delay
-        for section in sections:
-            extracted_content.extend(
-                extract_blocks(url, section, provider, api_token, base_url=base_url)
-            )
-            time.sleep(0.5)  # 500 ms delay between each processing
-    else:
-        # Parallel processing using ThreadPoolExecutor
-        with ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(
-                    extract_blocks, url, section, provider, api_token, base_url=base_url
-                )
-                for section in sections
-            ]
-            for future in as_completed(futures):
-                extracted_content.extend(future.result())
-
-    return extracted_content
 
 
 def wrap_text(draw, text, font, max_width):
@@ -2734,17 +2478,15 @@ def calculate_total_score(
 # Embedding utilities
 async def get_text_embeddings(
     texts: list[str],
-    llm_config: dict | None = None,
     model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
     batch_size: int = 32,
 ) -> np.ndarray:
     """
-    Compute embeddings for a list of texts using specified model.
+    Compute embeddings for a list of texts using sentence-transformers.
 
     Args:
         texts: List of texts to embed
-        llm_config: Optional LLM configuration for API-based embeddings
-        model_name: Model name (used when llm_config is None)
+        model_name: Model name for sentence-transformers
         batch_size: Batch size for processing
 
     Returns:
@@ -2755,39 +2497,6 @@ async def get_text_embeddings(
     if not texts:
         return np.array([])
 
-    # If LLMConfig provided, use litellm for embeddings
-    if llm_config is not None:
-        from litellm import aembedding
-
-        # Get embedding model from config or use default
-        embedding_model = llm_config.get("provider", "text-embedding-3-small")
-        api_base = llm_config.get("base_url", llm_config.get("api_base"))
-
-        # Prepare kwargs
-        kwargs = {
-            "model": embedding_model,
-            "input": texts,
-            "api_key": llm_config.get("api_token", llm_config.get("api_key")),
-        }
-
-        if api_base:
-            kwargs["api_base"] = api_base
-
-        # Handle OpenAI-compatible endpoints
-        if api_base and "openai/" not in embedding_model:
-            kwargs["model"] = f"openai/{embedding_model}"
-
-        # Get embeddings
-        response = await aembedding(**kwargs)
-
-        # Extract embeddings from response
-        embeddings = []
-        for item in response.data:
-            embeddings.append(item["embedding"])
-
-        return np.array(embeddings)
-
-    # Default: use sentence-transformers
     # Lazy load to avoid importing heavy libraries unless needed
     try:
         from sentence_transformers import SentenceTransformer
@@ -2816,12 +2525,11 @@ async def get_text_embeddings(
 
 def get_text_embeddings_sync(
     texts: list[str],
-    llm_config: dict | None = None,
     model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
     batch_size: int = 32,
 ) -> np.ndarray:
     """Synchronous wrapper for get_text_embeddings"""
-    return asyncio.run(get_text_embeddings(texts, llm_config, model_name, batch_size))
+    return asyncio.run(get_text_embeddings(texts, model_name, batch_size))
 
 
 def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
