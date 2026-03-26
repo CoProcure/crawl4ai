@@ -10,23 +10,24 @@ from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
 from crawl4ai.async_webcrawler import AsyncWebCrawler
 from crawl4ai.cache_context import CacheMode
 from crawl4ai.utils import RobotsParser
-from tests.helpers import EXAMPLE_URL, TestCacheClient
+
+from .helpers import EXAMPLE_URL, TestCacheClient
 
 
 @pytest.mark.asyncio
 async def test_robots_parser_cache():
     cache_client = TestCacheClient()
     parser = RobotsParser(cache_client=cache_client)
-    
+
     mock_response = MagicMock(status=200)
     mock_response.text = AsyncMock(return_value="User-agent: *\nAllow: /\n")
-    
+
     mock_session = MagicMock()
     mock_session.get.return_value.__aenter__.return_value = mock_response
     mock_session.__aenter__.return_value = mock_session
-    
+
     try:
-        with patch('crawl4ai.utils.aiohttp.ClientSession', return_value=mock_session):
+        with patch("crawl4ai.utils.aiohttp.ClientSession", return_value=mock_session):
             allowed = await parser.can_fetch(EXAMPLE_URL, "MyBot/1.0")
             assert allowed
             assert cache_client.count() == 1
@@ -36,6 +37,64 @@ async def test_robots_parser_cache():
 
             await parser.can_fetch("https://docs.crawl4ai.com", "MyBot/1.0")
             assert cache_client.count() == 2
+    finally:
+        cache_client.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_robots_parser_wildcard_string():
+    cache_client = TestCacheClient()
+    parser = RobotsParser(cache_client=cache_client)
+
+    mock_response = MagicMock(status=200)
+    mock_response.text = AsyncMock(
+        return_value="""User-agent: *
+Allow: /***************************************.css
+Allow: /***************************************.js
+Allow: /***************************************.png
+Allow: /***************************************.jpeg
+Allow: /***************************************.jpg
+Allow: /***************************************.gif
+Allow: /***************************************.ico
+Allow: /sitemap*.xml
+Allow: /*/default*
+Allow: /s/default
+Allow: /*default*/s/
+# Directories
+Disallow: /_user_controls
+Disallow: /admin
+
+"""
+    )
+
+    mock_session = MagicMock()
+    mock_session.get.return_value.__aenter__.return_value = mock_response
+    mock_session.__aenter__.return_value = mock_session
+
+    try:
+        with patch("crawl4ai.utils.aiohttp.ClientSession", return_value=mock_session):
+            allowed = await parser.can_fetch(
+                "https://testing.com/static/style.css", "MyBot/1.0"
+            )
+            assert allowed
+
+            allowed = await parser.can_fetch(
+                "https://testing.com/style.css", "MyBot/1.0"
+            )
+            assert allowed
+
+            allowed = await parser.can_fetch(
+                "https://testing.com/blah/default", "MyBot/1.0"
+            )
+            assert allowed
+
+            allowed = await parser.can_fetch("https://testing.com/admin", "MyBot/1.0")
+            assert not allowed
+
+            allowed = await parser.can_fetch(
+                "https://testing.com/admin/something", "MyBot/1.0"
+            )
+            assert not allowed
     finally:
         cache_client.cleanup()
 
@@ -83,7 +142,7 @@ Allow: /public/
         return runner
 
     runner = await start_test_server()
-    
+
     try:
         base_url = "http://localhost:8080"
 
@@ -122,26 +181,25 @@ Allow: /public/
         await runner.cleanup()
         cache_client.cleanup()
 
+
 @pytest.mark.asyncio
 async def test_real_websites():
     browser_config = BrowserConfig(headless=True, verbose=True)
     cache_client = TestCacheClient()
-    async with AsyncWebCrawler(cache_client=cache_client, config=browser_config) as crawler:
-        
+    async with AsyncWebCrawler(
+        cache_client=cache_client, config=browser_config
+    ) as crawler:
         # Test cases with URLs
         test_cases = [
             # Public sites that should be allowed
             ("https://example.com", True),  # Simple public site
             ("https://httpbin.org/get", True),  # API endpoint
-            
             # Sites with known strict robots.txt
             ("https://www.facebook.com/robots.txt", False),  # Social media
             ("https://www.google.com/search", False),  # Search pages
-            
             # Edge cases
             ("https://api.github.com", True),  # API service
             ("https://raw.githubusercontent.com", True),  # Content delivery
-            
             # Non-existent/error cases
             ("https://thisisnotarealwebsite.com", True),  # Non-existent domain
             ("https://localhost:12345", True),  # Invalid port
@@ -152,14 +210,14 @@ async def test_real_websites():
                 config = CrawlerRunConfig(
                     cache_mode=CacheMode.BYPASS,
                     check_robots_txt=True,  # Enable robots.txt checking
-                    verbose=True
+                    verbose=True,
                 )
-                
+
                 result = await crawler.arun(url=url, config=config)
                 allowed = result.success and not result.error_message
 
                 assert expected == allowed
-                
+
             except Exception:
                 continue
 
