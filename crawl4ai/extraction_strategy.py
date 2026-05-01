@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import inspect
 import json
 import re
@@ -50,6 +51,73 @@ from .utils import (
     sanitize_input_encode,
     split_and_parse_json_objects,
 )
+
+
+# Maximum source length for a computed-field expression. Generous for
+# real-world arithmetic (`price * qty * (1 - discount)`) but small enough
+# to keep AST parsing/validation cheap and bound how big a literal an
+# attacker can squeeze in.
+_SAFE_EVAL_MAX_LEN = 500
+
+# Maximum absolute value allowed for a numeric literal inside an
+# expression. Without this an attacker can write `[0] * 10000000000` to
+# OOM the worker; 10**6 is far above anything a real schema needs.
+_SAFE_EVAL_MAX_LITERAL = 10**6
+
+# `ast.Index` was deprecated in Python 3.9 (subscripts are now plain
+# expressions) and removed/aliased in later versions. Reference it
+# defensively so the allowlist still loads on 3.13+.
+_AST_INDEX = getattr(ast, "Index", ast.AST)
+
+_SAFE_EVAL_NODES = (
+    ast.Expression, ast.BoolOp, ast.BinOp, ast.UnaryOp,
+    ast.IfExp, ast.Compare,
+    ast.Constant, ast.Attribute, ast.Subscript, ast.Name,
+    ast.Load, ast.Slice, _AST_INDEX,
+    # Pow (`**`) is intentionally omitted: `2 ** (10 ** 9)` is a one-line
+    # CPU/memory bomb and exponentiation isn't needed for field math.
+    ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod,
+    ast.And, ast.Or, ast.Not,
+    ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+    ast.Is, ast.IsNot, ast.In, ast.NotIn,
+    ast.USub, ast.UAdd,
+    ast.Tuple, ast.List,
+    ast.JoinedStr, ast.FormattedValue,
+)
+
+
+def _safe_eval_expression(expression: str, item: dict):
+    """Evaluate a restricted arithmetic/attribute expression without
+    allowing arbitrary code execution. Only simple names, attribute
+    access, subscripts, comparisons, boolean ops, arithmetic, and string
+    operations are permitted — no calls, imports, comprehensions, or
+    exponentiation.
+
+    Closes CVE-2026-26216 by replacing the unrestricted ``eval()`` that
+    previously ran on user-supplied schema expressions.
+    """
+    if not isinstance(expression, str):
+        raise ValueError("Expression must be a string")
+    if len(expression) > _SAFE_EVAL_MAX_LEN:
+        raise ValueError(
+            f"Expression exceeds maximum length of {_SAFE_EVAL_MAX_LEN} chars"
+        )
+
+    tree = ast.parse(expression, mode="eval")
+    for node in ast.walk(tree):
+        if not isinstance(node, _SAFE_EVAL_NODES):
+            raise ValueError(
+                f"Disallowed expression node: {type(node).__name__}"
+            )
+        # Cap numeric literals so `[0] * 9999999999` can't OOM the worker.
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)):
+            if abs(node.value) > _SAFE_EVAL_MAX_LITERAL:
+                raise ValueError(
+                    f"Numeric literal exceeds maximum of {_SAFE_EVAL_MAX_LITERAL}"
+                )
+
+    code = compile(tree, "<expression>", "eval")
+    return eval(code, {"__builtins__": {}}, item)  # noqa: S307
 
 
 class ExtractionStrategy(ABC):
@@ -1040,48 +1108,10 @@ class JsonElementExtractionStrategy(ExtractionStrategy):
             return value.strip()
         return value
 
-    @staticmethod
-    def _safe_eval(expression: str, item: dict):
-        """Evaluate a restricted arithmetic/attribute expression without
-        allowing arbitrary code execution.  Only simple names, attribute
-        access, subscripts, comparisons, boolean ops, arithmetic, and
-        string operations are permitted — no calls, imports, or
-        comprehensions.
-
-        This closes CVE-2026-26216 by replacing the unrestricted
-        ``eval()`` that previously ran here.
-        """
-        import ast as _ast
-
-        _SAFE_NODES = (
-            _ast.Expression, _ast.BoolOp, _ast.BinOp, _ast.UnaryOp,
-            _ast.IfExp, _ast.Compare,
-            _ast.Constant, _ast.Attribute, _ast.Subscript, _ast.Name,
-            _ast.Load, _ast.Slice, _ast.Index,  # Index for older Pythons
-            _ast.Add, _ast.Sub, _ast.Mult, _ast.Div, _ast.FloorDiv,
-            _ast.Mod, _ast.Pow,
-            _ast.And, _ast.Or, _ast.Not,
-            _ast.Eq, _ast.NotEq, _ast.Lt, _ast.LtE, _ast.Gt, _ast.GtE,
-            _ast.Is, _ast.IsNot, _ast.In, _ast.NotIn,
-            _ast.USub, _ast.UAdd,
-            _ast.Tuple, _ast.List,
-            _ast.JoinedStr, _ast.FormattedValue,  # f-strings
-        )
-
-        tree = _ast.parse(expression, mode="eval")
-        for node in _ast.walk(tree):
-            if not isinstance(node, _SAFE_NODES):
-                raise ValueError(
-                    f"Disallowed expression node: {type(node).__name__}"
-                )
-
-        code = compile(tree, "<expression>", "eval")
-        return eval(code, {"__builtins__": {}}, item)  # noqa: S307
-
     def _compute_field(self, item, field):
         try:
             if "expression" in field:
-                return self._safe_eval(field["expression"], item)
+                return _safe_eval_expression(field["expression"], item)
             if "function" in field:
                 return field["function"](item)
         except Exception as e:

@@ -209,6 +209,24 @@ def _safe_eval_config(expr: str) -> dict:
     return obj.dump()
 
 
+_ALLOWED_URL_SCHEMES = ("http://", "https://", "raw:", "raw://")
+
+
+def _validate_url_scheme(url: str) -> None:
+    """Reject URLs whose scheme is not in the allowlist.
+
+    Closes CVE-2026-26217: ``file://`` (and other) schemes could be used
+    to read arbitrary server files via the crawler.  Comparison is
+    case-insensitive so ``HTTP://...`` is accepted.
+    """
+    if not isinstance(url, str) or not url.lower().startswith(_ALLOWED_URL_SCHEMES):
+        raise HTTPException(
+            400,
+            "Invalid URL format. Must start with http://, https://, "
+            "or for raw HTML (raw:, raw://)",
+        )
+
+
 # ── job router ──────────────────────────────────────────────
 app.include_router(init_job_router(redis, config, token_dep))
 
@@ -237,9 +255,7 @@ async def get_markdown(
     body: MarkdownRequest,
     _td: Dict = Depends(token_dep),
 ):
-    if not body.url.startswith(("http://", "https://")) and not body.url.startswith(("raw:", "raw://")):
-        raise HTTPException(
-            400, "Invalid URL format. Must start with http://, https://, or for raw HTML (raw:, raw://)")
+    _validate_url_scheme(body.url)
     markdown = await handle_markdown_request(
         body.url, body.f, body.q, body.c, config, body.provider
     )
@@ -265,9 +281,7 @@ async def generate_html(
     Crawls the URL, preprocesses the raw HTML for schema extraction, and returns the processed HTML.
     Use when you need sanitized HTML structures for building schemas or further processing.
     """
-    if not body.url.startswith(("http://", "https://", "raw:", "raw://")):
-        raise HTTPException(
-            400, "Invalid URL format. Must start with http://, https://, or raw:")
+    _validate_url_scheme(body.url)
     cfg = CrawlerRunConfig()
     async with AsyncWebCrawler(config=BrowserConfig()) as crawler:
         results = await crawler.arun(url=body.url, config=cfg)
@@ -292,9 +306,7 @@ async def generate_screenshot(
     Use when you need an image snapshot of the rendered page. Its recommened to provide an output path to save the screenshot.
     Then in result instead of the screenshot you will get a path to the saved file.
     """
-    if not body.url.startswith(("http://", "https://", "raw:", "raw://")):
-        raise HTTPException(
-            400, "Invalid URL format. Must start with http://, https://, or raw:")
+    _validate_url_scheme(body.url)
     cfg = CrawlerRunConfig(
         screenshot=True, screenshot_wait_for=body.screenshot_wait_for)
     async with AsyncWebCrawler(config=BrowserConfig()) as crawler:
@@ -324,9 +336,7 @@ async def generate_pdf(
     Use when you need a printable or archivable snapshot of the page. It is recommended to provide an output path to save the PDF.
     Then in result instead of the PDF you will get a path to the saved file.
     """
-    if not body.url.startswith(("http://", "https://", "raw:", "raw://")):
-        raise HTTPException(
-            400, "Invalid URL format. Must start with http://, https://, or raw:")
+    _validate_url_scheme(body.url)
     cfg = CrawlerRunConfig(pdf=True)
     async with AsyncWebCrawler(config=BrowserConfig()) as crawler:
         results = await crawler.arun(url=body.url, config=cfg)
@@ -393,9 +403,7 @@ async def execute_js(
         ```
 
     """
-    if not body.url.startswith(("http://", "https://", "raw:", "raw://")):
-        raise HTTPException(
-            400, "Invalid URL format. Must start with http://, https://, or raw:")
+    _validate_url_scheme(body.url)
     cfg = CrawlerRunConfig(js_code=body.scripts)
     async with AsyncWebCrawler(config=BrowserConfig()) as crawler:
         results = await crawler.arun(url=body.url, config=cfg)
