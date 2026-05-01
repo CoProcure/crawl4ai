@@ -179,7 +179,6 @@ class AdaptiveConfig:
     
     # Embedding strategy parameters
     embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    embedding_llm_config: dict | None = None  # Separate config for embeddings
     n_query_variations: int = 10
     coverage_threshold: float = 0.85
     alpha_shape_alpha: float = 0.5
@@ -594,9 +593,8 @@ class StatisticalStrategy(CrawlStrategy):
 class EmbeddingStrategy(CrawlStrategy):
     """Embedding-based adaptive crawling using semantic space coverage"""
     
-    def __init__(self, embedding_model: str = None, llm_config: dict = None):
+    def __init__(self, embedding_model: str = None):
         self.embedding_model = embedding_model or "sentence-transformers/all-MiniLM-L6-v2"
-        self.llm_config = llm_config
         self._embedding_cache = {}
         self._link_embedding_cache = {}  # Cache for link embeddings
         self._validation_passed = False  # Track if validation passed
@@ -610,15 +608,7 @@ class EmbeddingStrategy(CrawlStrategy):
     async def _get_embeddings(self, texts: list[str]) -> Any:
         """Get embeddings using configured method"""
         from .utils import get_text_embeddings
-        embedding_llm_config = {
-            'provider': 'openai/text-embedding-3-small',
-            'api_token': os.getenv('OPENAI_API_KEY')
-        }
-        return await get_text_embeddings(
-            texts, 
-            embedding_llm_config,
-            self.embedding_model
-        )
+        return await get_text_embeddings(texts, self.embedding_model)
     
     def _compute_distance_matrix(self, query_embeddings: Any, kb_embeddings: Any) -> Any:
         """Compute distance matrix using vectorized operations"""
@@ -678,41 +668,8 @@ class EmbeddingStrategy(CrawlStrategy):
         
         Return as a JSON array of strings."""
         
-        # Use the LLM for query generation
-        provider = self.llm_config.get('provider', 'openai/gpt-4o-mini') if self.llm_config else 'openai/gpt-4o-mini'
-        api_token = self.llm_config.get('api_token') if self.llm_config else None
-        
-        # response = perform_completion_with_backoff(
-        #     provider=provider,
-        #     prompt_with_variables=prompt,
-        #     api_token=api_token,
-        #     json_response=True
-        # )
-        
-        # variations = json.loads(response.choices[0].message.content)
-        
-        
-        # # Mock data with more variations for split
-        variations ={'queries': ['what are the best vegetables to use in fried rice?', 'how do I make vegetable fried rice from scratch?', 'can you provide a quick recipe for vegetable fried rice?', 'what cooking techniques are essential for perfect fried rice with vegetables?', 'how to add flavor to vegetable fried rice?', 'are there any tips for making healthy fried rice with vegetables?']}
-        
-        
-        # variations = {'queries': [
-        #     'How do async and await work with coroutines in Python?',
-        #     'What is the role of event loops in asynchronous programming?',
-        #     'Can you explain the differences between async/await and traditional callback methods?',
-        #     'How do coroutines interact with event loops in JavaScript?',
-        #     'What are the benefits of using async await over promises in Node.js?',
-        #     'How to manage multiple coroutines with an event loop?',
-        #     'What are some common pitfalls when using async await with coroutines?',
-        #     'How do different programming languages implement async await and event loops?',
-        #     'What happens when an async function is called without await?',
-        #     'How does the event loop handle blocking operations?',
-        #     'Can you nest async functions and how does that affect the event loop?',
-        #     'What is the performance impact of using async/await?'
-        # ]}
-        
-        # Split into train and validation
-        # all_queries = [query] + variations['queries']
+        # Mock data with more variations for split
+        variations = {'queries': ['what are the best vegetables to use in fried rice?', 'how do I make vegetable fried rice from scratch?', 'can you provide a quick recipe for vegetable fried rice?', 'what cooking techniques are essential for perfect fried rice with vegetables?', 'how to add flavor to vegetable fried rice?', 'are there any tips for making healthy fried rice with vegetables?']}
         
         # Randomly shuffle for proper train/val split (keeping original query in training)
         import random
@@ -843,11 +800,7 @@ class EmbeddingStrategy(CrawlStrategy):
         
         # Batch embed only uncached links
         if texts_to_embed:
-            embedding_llm_config = {
-                'provider': 'openai/text-embedding-3-small',
-                'api_token': os.getenv('OPENAI_API_KEY')
-            }
-            new_embeddings = await get_text_embeddings(texts_to_embed, embedding_llm_config, self.embedding_model)
+            new_embeddings = await get_text_embeddings(texts_to_embed, self.embedding_model)
 
             # Cache the new embeddings
             for link, text, embedding in zip(links_to_embed, texts_to_embed, new_embeddings):
@@ -1183,11 +1136,7 @@ class EmbeddingStrategy(CrawlStrategy):
             return
             
         # Get embeddings for new texts
-        embedding_llm_config = {
-            'provider': 'openai/text-embedding-3-small',
-            'api_token': os.getenv('OPENAI_API_KEY')
-        }        
-        new_embeddings = await get_text_embeddings(new_texts, embedding_llm_config, self.embedding_model)
+        new_embeddings = await get_text_embeddings(new_texts, self.embedding_model)
 
         # Deduplicate embeddings before adding to KB
         if state.kb_embeddings is None:
@@ -1257,7 +1206,6 @@ class AdaptiveCrawler:
         if strategy_name == "embedding":
             return EmbeddingStrategy(
                 embedding_model=self.config.embedding_model,
-                llm_config=self.config.embedding_llm_config
             )
         raise ValueError(f"Unknown strategy: {strategy_name}")
     

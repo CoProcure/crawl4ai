@@ -32,7 +32,6 @@ RoundRobinProxyStrategy = Union['RoundRobinProxyStrategyType']
 
 # Extraction types
 ExtractionStrategy = Union['ExtractionStrategyType']
-LLMExtractionStrategy = Union['LLMExtractionStrategyType']
 CosineStrategy = Union['CosineStrategyType']
 JsonCssExtractionStrategy = Union['JsonCssExtractionStrategyType']
 JsonXPathExtractionStrategy = Union['JsonXPathExtractionStrategyType']
@@ -49,7 +48,6 @@ MarkdownGenerationResult = Union['MarkdownGenerationResultType']
 RelevantContentFilter = Union['RelevantContentFilterType']
 PruningContentFilter = Union['PruningContentFilterType']
 BM25ContentFilter = Union['BM25ContentFilterType']
-LLMContentFilter = Union['LLMContentFilterType']
 
 # Dispatcher types
 BaseDispatcher = Union['BaseDispatcherType']
@@ -155,9 +153,6 @@ if TYPE_CHECKING:
         BM25ContentFilter as BM25ContentFilterType,
     )
     from .content_filter_strategy import (
-        LLMContentFilter as LLMContentFilterType,
-    )
-    from .content_filter_strategy import (
         PruningContentFilter as PruningContentFilterType,
     )
 
@@ -243,10 +238,6 @@ if TYPE_CHECKING:
     from .extraction_strategy import (
         JsonXPathExtractionStrategy as JsonXPathExtractionStrategyType,
     )
-    from .extraction_strategy import (
-        LLMExtractionStrategy as LLMExtractionStrategyType,
-    )
-
     # Markdown generation imports
     from .markdown_generation_strategy import (
         DefaultMarkdownGenerator as DefaultMarkdownGeneratorType,

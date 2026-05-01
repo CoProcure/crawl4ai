@@ -14,24 +14,21 @@ import traceback
 from array import array
 from collections import deque
 from collections.abc import Callable, Generator, Iterable, Sequence
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache, wraps
 from itertools import chain
 from pathlib import Path
 from socket import gaierror
 from urllib.parse import (
-   parse_qs,
-   parse_qsl,
-   quote,
-   unquote,
-   urlencode,
-   urljoin,
-   urlparse,
-   urlunparse,
+    parse_qs,
+    parse_qsl,
+    quote,
+    unquote,
+    urlencode,
+    urljoin,
+    urlparse,
+    urlunparse,
 )
-
-# Monkey patch to fix wildcard handling in urllib.robotparser
-from urllib.robotparser import RobotFileParser, RuleLine
 
 import aiohttp
 import httpx
@@ -43,38 +40,16 @@ from bs4 import BeautifulSoup
 from lxml import etree
 from lxml import html as lhtml
 from packaging import version
+from protego import Protego
 
 from crawl4ai.cache_client import (
-   DEFAULT_CACHE_TTL_SECONDS,
-   ROBOTS_CACHE_KEY_PREFIX,
-   CacheClient,
+    DEFAULT_CACHE_TTL_SECONDS,
+    ROBOTS_CACHE_KEY_PREFIX,
+    CacheClient,
 )
 
 from . import __version__
-from .config import (
-   DEFAULT_PROVIDER,
-   PROVIDER_MODELS,
-)
-from .prompts import PROMPT_EXTRACT_BLOCKS
 
-original_applies_to = RuleLine.applies_to
-
-def patched_applies_to(self, filename):
-   # Handle wildcards in paths
-   if '*' in self.path or '%2A' in self.path or self.path in ("*", "%2A"):
-       pattern = self.path.replace('%2A', '*')
-       pattern = re.escape(pattern).replace('\\*', '.*')
-       pattern = '^' + pattern
-       if pattern.endswith('\\$'):
-           pattern = pattern[:-2] + '$'
-       try:
-           return bool(re.match(pattern, filename))
-       except re.error:
-           return original_applies_to(self, filename)
-   return original_applies_to(self, filename)
-
-RuleLine.applies_to = patched_applies_to
-# Monkey patch ends
 
 def chunk_documents(
     documents: Iterable[str],
@@ -120,13 +95,13 @@ def chunk_documents(
             chunk_tokens = []
             chunk_contrib = []
             chunk_total = 0.0
-            
+
             # Build chunk up to threshold
             while contribution_queue:
                 next_contrib = contribution_queue[0]
                 if chunk_total + next_contrib > chunk_token_threshold:
                     break
-                
+
                 chunk_total += next_contrib
                 chunk_contrib.append(contribution_queue.popleft())
                 chunk_tokens.append(token_queue.popleft())
@@ -149,47 +124,52 @@ def chunk_documents(
             if overlap_idx > 0:
                 overlap_tokens = chunk_tokens[-overlap_idx:]
                 overlap_contrib = chunk_contrib[-overlap_idx:]
-                
+
                 token_queue.extendleft(reversed(overlap_tokens))
                 contribution_queue.extendleft(reversed(overlap_contrib))
                 current_token_count += overlap_total
 
             # Update current token count and yield chunk
             current_token_count -= sum(chunk_contrib)
-            yield " ".join(chunk_tokens[:len(chunk_tokens)-overlap_idx] if overlap_idx else chunk_tokens)
+            yield " ".join(
+                chunk_tokens[: len(chunk_tokens) - overlap_idx]
+                if overlap_idx
+                else chunk_tokens
+            )
 
     # Yield remaining tokens
     if token_queue:
         yield " ".join(token_queue)
 
+
 def merge_chunks(
-    docs: Sequence[str], 
+    docs: Sequence[str],
     target_size: int,
     overlap: int = 0,
     word_token_ratio: float = 1.0,
-    splitter: Callable = None
+    splitter: Callable = None,
 ) -> list[str]:
     """
     Merges a sequence of documents into chunks based on a target token count, with optional overlap.
-    
+
     Each document is split into tokens using the provided splitter function (defaults to str.split). Tokens are distributed into chunks aiming for the specified target size, with optional overlapping tokens between consecutive chunks. Returns a list of non-empty merged chunks as strings.
-    
+
     Args:
         docs: Sequence of input document strings to be merged.
         target_size: Target number of tokens per chunk.
         overlap: Number of tokens to overlap between consecutive chunks.
         word_token_ratio: Multiplier to estimate token count from word count.
         splitter: Callable used to split each document into tokens.
-    
+
     Returns:
         List of merged document chunks as strings, each not exceeding the target token size.
     """
     # Pre-tokenize all docs and store token counts
     splitter = splitter or str.split
-    token_counts = array('I')
+    token_counts = array("I")
     all_tokens: list[list[str]] = []
     total_tokens = 0
-    
+
     for doc in docs:
         tokens = splitter(doc)
         count = int(len(tokens) * word_token_ratio)
@@ -197,17 +177,17 @@ def merge_chunks(
             token_counts.append(count)
             all_tokens.append(tokens)
             total_tokens += count
-    
+
     if not total_tokens:
         return []
 
     # Pre-allocate chunks
     num_chunks = max(1, (total_tokens + target_size - 1) // target_size)
     chunks: list[list[str]] = [[] for _ in range(num_chunks)]
-    
+
     curr_chunk = 0
     curr_size = 0
-    
+
     # Distribute tokens
     for tokens in chain.from_iterable(all_tokens):
         if curr_size >= target_size and curr_chunk < num_chunks - 1:
@@ -219,12 +199,12 @@ def merge_chunks(
             else:
                 curr_chunk += 1
                 curr_size = 0
-                
+
         chunks[curr_chunk].append(tokens)
         curr_size += 1
 
     # Return only non-empty chunks
-    return [' '.join(chunk) for chunk in chunks if chunk]
+    return [" ".join(chunk) for chunk in chunks if chunk]
 
 
 class VersionManager:
@@ -264,19 +244,17 @@ class RobotsParser:
 
     def _cache_rules(self, domain: str, content: str):
         self.cache_client.set(
-            key=self._get_cache_key(domain),
-            value=content,
-            ttl_seconds=self.cache_ttl
+            key=self._get_cache_key(domain), value=content, ttl_seconds=self.cache_ttl
         )
 
     async def can_fetch(self, url: str, user_agent: str = "*") -> bool:
         """
         Check if URL can be fetched according to robots.txt rules.
-        
+
         Args:
             url: The URL to check
             user_agent: User agent string to check against (default: "*")
-            
+
         Returns:
             bool: True if allowed, False if disallowed by robots.txt
         """
@@ -291,16 +269,18 @@ class RobotsParser:
 
         # Fast path - check cache first
         rules = self._get_cached_rules(domain)
-        
+
         # If rules not found or stale, fetch new ones
         if not rules:
             try:
                 # Ensure we use the same scheme as the input URL
-                scheme = parsed.scheme or 'http'
+                scheme = parsed.scheme or "http"
                 robots_url = f"{scheme}://{domain}/robots.txt"
-                
+
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(robots_url, timeout=2, ssl=False) as response:
+                    async with session.get(
+                        robots_url, timeout=2, ssl=False
+                    ) as response:
                         if response.status == 200:
                             rules = await response.text()
                             self._cache_rules(domain, rules)
@@ -311,89 +291,268 @@ class RobotsParser:
                 return True
 
         # Create parser for this check
-        parser = RobotFileParser() 
-        parser.parse(rules.splitlines())
-        
-        # If parser can't read rules, allow access
-        if not parser.mtime():
-            return True
-            
-        return parser.can_fetch(user_agent, url)
+        parser = Protego.parse(rules)
+        return parser.can_fetch(url, user_agent)
+
 
 class InvalidCSSSelectorError(Exception):
     pass
 
 
-SPLITS = bytearray([
-    # Control chars (0-31) + space (32)
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    # Special chars (33-47): ! " # $ % & ' ( ) * + , - . /
-    1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,
-    # Numbers (48-57): Treat as non-splits
-    0,0,0,0,0,0,0,0,0,0,
-    # More special chars (58-64): : ; < = > ? @
-    1,1,1,1,1,1,1,
-    # Uppercase (65-90): Keep
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    # More special chars (91-96): [ \ ] ^ _ `
-    1,1,1,1,1,1,
-    # Lowercase (97-122): Keep
-    0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-    # Special chars (123-126): { | } ~
-    1,1,1,1,
-    # Extended ASCII
-    *([1] * 128)
-])
+SPLITS = bytearray(
+    [
+        # Control chars (0-31) + space (32)
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        # Special chars (33-47): ! " # $ % & ' ( ) * + , - . /
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        # Numbers (48-57): Treat as non-splits
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        # More special chars (58-64): : ; < = > ? @
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        # Uppercase (65-90): Keep
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        # More special chars (91-96): [ \ ] ^ _ `
+        1,
+        1,
+        1,
+        1,
+        1,
+        1,
+        # Lowercase (97-122): Keep
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        # Special chars (123-126): { | } ~
+        1,
+        1,
+        1,
+        1,
+        # Extended ASCII
+        *([1] * 128),
+    ]
+)
 
 # Additional split chars for HTML/code
 HTML_CODE_CHARS = {
     # HTML specific
-    '•', '►', '▼', '©', '®', '™', '→', '⇒', '≈', '≤', '≥',
-    # Programming symbols  
-    '+=', '-=', '*=', '/=', '=>', '<=>', '!=', '==', '===',
-    '++', '--', '<<', '>>', '&&', '||', '??', '?:', '?.', 
+    "•",
+    "►",
+    "▼",
+    "©",
+    "®",
+    "™",
+    "→",
+    "⇒",
+    "≈",
+    "≤",
+    "≥",
+    # Programming symbols
+    "+=",
+    "-=",
+    "*=",
+    "/=",
+    "=>",
+    "<=>",
+    "!=",
+    "==",
+    "===",
+    "++",
+    "--",
+    "<<",
+    ">>",
+    "&&",
+    "||",
+    "??",
+    "?:",
+    "?.",
     # Common Unicode
-    '…', '"', '"', ''', ''', '«', '»', '—', '–',
+    "…",
+    '"',
+    '"',
+    """, """,
+    "«",
+    "»",
+    "—",
+    "–",
     # Additional splits
-    '+', '=', '~', '@', '#', '$', '%', '^', '&', '*',
-    '(', ')', '{', '}', '[', ']', '|', '\\', '/', '`',
-    '<', '>', ',', '.', '?', '!', ':', ';', '-', '_'
+    "+",
+    "=",
+    "~",
+    "@",
+    "#",
+    "$",
+    "%",
+    "^",
+    "&",
+    "*",
+    "(",
+    ")",
+    "{",
+    "}",
+    "[",
+    "]",
+    "|",
+    "\\",
+    "/",
+    "`",
+    "<",
+    ">",
+    ",",
+    ".",
+    "?",
+    "!",
+    ":",
+    ";",
+    "-",
+    "_",
 }
+
 
 def advanced_split(text: str) -> list[str]:
     result = []
-    word = array('u')
-    
+    word = array("u")
+
     i = 0
     text_len = len(text)
-    
+
     while i < text_len:
         char = text[i]
         o = ord(char)
-        
+
         # Fast path for ASCII
         if o < 256 and SPLITS[o]:
             if word:
                 result.append(word.tounicode())
-                word = array('u')
+                word = array("u")
         # Check for multi-char symbols
         elif i < text_len - 1:
             two_chars = char + text[i + 1]
             if two_chars in HTML_CODE_CHARS:
                 if word:
                     result.append(word.tounicode())
-                    word = array('u')
+                    word = array("u")
                 i += 1  # Skip next char since we used it
             else:
                 word.append(char)
         else:
             word.append(char)
         i += 1
-            
+
     if word:
         result.append(word.tounicode())
-        
+
     return result
+
 
 def create_box_message(
     message: str,
@@ -462,7 +621,7 @@ def create_box_message(
     box = [
         f"[{border_color}]{tl}{horizontal_line}{tr}[/{border_color}]",
         *[
-            f"[{border_color}]{v_line}[{text_color}] {line:<{width-2}}[/{text_color}][{border_color}]{v_line}[/{border_color}]"
+            f"[{border_color}]{v_line}[{text_color}] {line:<{width - 2}}[/{text_color}][{border_color}]{v_line}[/{border_color}]"
             for line in formatted_lines
         ],
         f"[{border_color}]{bl}{horizontal_line}{br}[/{border_color}]",
@@ -575,24 +734,21 @@ def get_home_folder():
     os.makedirs(f"{home_folder}/models", exist_ok=True)
     return home_folder
 
+
 async def get_chromium_path(browser_type) -> str:
     """Returns the browser executable path using playwright's browser management.
-    
+
     Uses playwright's built-in browser management to get the correct browser executable
     path regardless of platform. This ensures we're using the same browser version
     that playwright is tested with.
-    
+
     Returns:
         str: Path to browser executable
     Raises:
         RuntimeError: If browser executable cannot be found
-    """        
-    browser_types = {
-        "chromium": "chromium",
-        "firefox": "firefox",
-        "webkit": "webkit"
-    }
-    
+    """
+    browser_types = {"chromium": "chromium", "firefox": "firefox", "webkit": "webkit"}
+
     browser_type = browser_types.get(browser_type)
     if not browser_type:
         raise RuntimeError(f"Unsupported browser type: {browser_type}")
@@ -605,18 +761,15 @@ async def get_chromium_path(browser_type) -> str:
             return f.read()
 
     from playwright.async_api import async_playwright
+
     async with async_playwright() as p:
-        browsers = {
-            'chromium': p.chromium,
-            'firefox': p.firefox, 
-            'webkit': p.webkit
-        }
-        
+        browsers = {"chromium": p.chromium, "firefox": p.firefox, "webkit": p.webkit}
+
         if browser_type.lower() not in browsers:
             raise ValueError(
                 f"Invalid browser type. Must be one of: {', '.join(browsers.keys())}"
             )
-            
+
         # Save the path int the crawl4ai home folder
         home_folder = get_home_folder()
         browser_path = browsers[browser_type.lower()].executable_path
@@ -625,8 +778,9 @@ async def get_chromium_path(browser_type) -> str:
         # Save the path in a text file with browser type name
         with open(os.path.join(home_folder, f"{browser_type.lower()}.path"), "w") as f:
             f.write(browser_path)
-        
+
         return browser_path
+
 
 def beautify_html(escaped_html):
     """
@@ -804,10 +958,9 @@ def extract_metadata_using_lxml(html, doc=None):
 
     # Final fallback: Use OpenGraph or Twitter title if <title> is missing or empty
     if not title:
-        title_candidates = (
-            doc.xpath("//meta[@property='og:title']/@content") or
-            doc.xpath("//meta[@name='twitter:title']/@content")
-        )
+        title_candidates = doc.xpath(
+            "//meta[@property='og:title']/@content"
+        ) or doc.xpath("//meta[@name='twitter:title']/@content")
         title = title_candidates[0] if title_candidates else None
 
     # Strip and assign title
@@ -840,8 +993,8 @@ def extract_metadata_using_lxml(html, doc=None):
         content = tag.get("content", "").strip()
         if property_name and content:
             metadata[property_name] = content
-   
-   # Article metadata
+
+    # Article metadata
     article_tags = head.xpath('.//meta[starts-with(@property, "article:")]')
     for tag in article_tags:
         property_name = tag.get("property", "").strip()
@@ -923,7 +1076,7 @@ def extract_metadata(html, soup=None):
         content = tag.get("content", "").strip()
         if property_name and content:
             metadata[property_name] = content
-    
+
     # Article metadata
     article_tags = head.find_all("meta", attrs={"property": re.compile(r"^article:")})
     for tag in article_tags:
@@ -931,7 +1084,7 @@ def extract_metadata(html, soup=None):
         content = tag.get("content", "").strip()
         if property_name and content:
             metadata[property_name] = content
-    
+
     return metadata
 
 
@@ -978,6 +1131,7 @@ def extract_xml_data_legacy(tags, string):
 
     return data
 
+
 def extract_xml_data(tags, string):
     """
     Extract data for specified XML tags from a string, returning the longest content for each tag.
@@ -1000,7 +1154,7 @@ def extract_xml_data(tags, string):
     for tag in tags:
         pattern = f"<{tag}>(.*?)</{tag}>"
         matches = re.findall(pattern, string, re.DOTALL)
-        
+
         if matches:
             # Find the longest content for this tag
             longest_content = max(matches, key=len).strip()
@@ -1009,212 +1163,6 @@ def extract_xml_data(tags, string):
             data[tag] = ""
 
     return data
-
-
-def perform_completion_with_backoff(
-    provider,
-    prompt_with_variables,
-    api_token,
-    json_response=False,
-    base_url=None,
-    **kwargs,
-):
-    """
-    Perform an API completion request with exponential backoff.
-
-    How it works:
-    1. Sends a completion request to the API.
-    2. Retries on rate-limit errors with exponential delays.
-    3. Returns the API response or an error after all retries.
-
-    Args:
-        provider (str): The name of the API provider.
-        prompt_with_variables (str): The input prompt for the completion request.
-        api_token (str): The API token for authentication.
-        json_response (bool): Whether to request a JSON response. Defaults to False.
-        base_url (Optional[str]): The base URL for the API. Defaults to None.
-        **kwargs: Additional arguments for the API request.
-
-    Returns:
-        dict: The API response or an error message after all retries.
-    """
-
-    from litellm import completion
-    from litellm.exceptions import RateLimitError
-
-    max_attempts = 3
-    base_delay = 2  # Base delay in seconds, you can adjust this based on your needs
-
-    extra_args = {"temperature": 0.01, "api_key": api_token, "base_url": base_url}
-    if json_response:
-        extra_args["response_format"] = {"type": "json_object"}
-
-    if kwargs.get("extra_args"):
-        extra_args.update(kwargs["extra_args"])
-
-    for attempt in range(max_attempts):
-        try:
-            response = completion(
-                model=provider,
-                messages=[{"role": "user", "content": prompt_with_variables}],
-                **extra_args,
-            )
-            return response  # Return the successful response
-        except RateLimitError as e:
-            print("Rate limit error:", str(e))
-
-            # Check if we have exhausted our max attempts
-            if attempt < max_attempts - 1:
-                # Calculate the delay and wait
-                delay = base_delay * (2**attempt)  # Exponential backoff formula
-                print(f"Waiting for {delay} seconds before retrying...")
-                time.sleep(delay)
-            else:
-                # Return an error response after exhausting all retries
-                return [
-                    {
-                        "index": 0,
-                        "tags": ["error"],
-                        "content": ["Rate limit error. Please try again later."],
-                    }
-                ]
-        except Exception as e:
-            raise e  # Raise any other exceptions immediately
-            # print("Error during completion request:", str(e))
-            # error_message = e.message
-            # return [
-            #     {
-            #         "index": 0,
-            #         "tags": ["error"],
-            #         "content": [
-            #             f"Error during LLM completion request. {error_message}"
-            #         ],
-            #     }
-            # ]
-
-
-def extract_blocks(url, html, provider=DEFAULT_PROVIDER, api_token=None, base_url=None):
-    """
-    Extract content blocks from website HTML using an AI provider.
-
-    How it works:
-    1. Prepares a prompt by sanitizing and escaping HTML.
-    2. Sends the prompt to an AI provider with optional retries.
-    3. Parses the response to extract structured blocks or errors.
-
-    Args:
-        url (str): The website URL.
-        html (str): The HTML content of the website.
-        provider (str): The AI provider for content extraction. Defaults to DEFAULT_PROVIDER.
-        api_token (Optional[str]): The API token for authentication. Defaults to None.
-        base_url (Optional[str]): The base URL for the API. Defaults to None.
-
-    Returns:
-        List[dict]: A list of extracted content blocks.
-    """
-
-    # api_token = os.getenv('GROQ_API_KEY', None) if not api_token else api_token
-    api_token = PROVIDER_MODELS.get(provider, None) if not api_token else api_token
-
-    variable_values = {
-        "URL": url,
-        "HTML": escape_json_string(sanitize_html(html)),
-    }
-
-    prompt_with_variables = PROMPT_EXTRACT_BLOCKS
-    for variable in variable_values:
-        prompt_with_variables = prompt_with_variables.replace(
-            "{" + variable + "}", variable_values[variable]
-        )
-
-    response = perform_completion_with_backoff(
-        provider, prompt_with_variables, api_token, base_url=base_url
-    )
-
-    try:
-        blocks = extract_xml_data(["blocks"], response.choices[0].message.content)[
-            "blocks"
-        ]
-        blocks = json.loads(blocks)
-        ## Add error: False to the blocks
-        for block in blocks:
-            block["error"] = False
-    except Exception:
-        parsed, unparsed = split_and_parse_json_objects(
-            response.choices[0].message.content
-        )
-        blocks = parsed
-        # Append all unparsed segments as onr error block and content is list of unparsed segments
-        if unparsed:
-            blocks.append(
-                {"index": 0, "error": True, "tags": ["error"], "content": unparsed}
-            )
-    return blocks
-
-
-def extract_blocks_batch(batch_data, provider="groq/llama3-70b-8192", api_token=None):
-    """
-    Extract content blocks from a batch of website HTMLs.
-
-    How it works:
-    1. Prepares prompts for each URL and HTML pair.
-    2. Sends the prompts to the AI provider in a batch request.
-    3. Parses the responses to extract structured blocks or errors.
-
-    Args:
-        batch_data (List[Tuple[str, str]]): A list of (URL, HTML) pairs.
-        provider (str): The AI provider for content extraction. Defaults to "groq/llama3-70b-8192".
-        api_token (Optional[str]): The API token for authentication. Defaults to None.
-
-    Returns:
-        List[dict]: A list of extracted content blocks from all batch items.
-    """
-
-    api_token = os.getenv("GROQ_API_KEY", None) if not api_token else api_token
-    from litellm import batch_completion
-
-    messages = []
-
-    for url, _html in batch_data:
-        variable_values = {
-            "URL": url,
-            "HTML": _html,
-        }
-
-        prompt_with_variables = PROMPT_EXTRACT_BLOCKS
-        for variable in variable_values:
-            prompt_with_variables = prompt_with_variables.replace(
-                "{" + variable + "}", variable_values[variable]
-            )
-
-        messages.append([{"role": "user", "content": prompt_with_variables}])
-
-    responses = batch_completion(model=provider, messages=messages, temperature=0.01)
-
-    all_blocks = []
-    for response in responses:
-        try:
-            blocks = extract_xml_data(["blocks"], response.choices[0].message.content)[
-                "blocks"
-            ]
-            blocks = json.loads(blocks)
-
-        except Exception:
-            blocks = [
-                {
-                    "index": 0,
-                    "tags": ["error"],
-                    "content": [
-                        "Error extracting blocks from the HTML content. Choose another provider/model or try again."
-                    ],
-                    "questions": [
-                        "What went wrong during the block extraction process?"
-                    ],
-                }
-            ]
-        all_blocks.append(blocks)
-
-    return sum(all_blocks, [])
 
 
 def merge_chunks_based_on_token_threshold(chunks, token_threshold):
@@ -1247,51 +1195,6 @@ def merge_chunks_based_on_token_threshold(chunks, token_threshold):
         merged_sections.append("\n\n".join(current_chunk))
 
     return merged_sections
-
-
-def process_sections(
-    url: str, sections: list, provider: str, api_token: str, base_url=None
-) -> list:
-    """
-    Process sections of HTML content sequentially or in parallel.
-
-    How it works:
-    1. Sequentially processes sections with delays for "groq/" providers.
-    2. Uses ThreadPoolExecutor for parallel processing with other providers.
-    3. Extracts content blocks for each section.
-
-    Args:
-        url (str): The website URL.
-        sections (List[str]): The list of HTML sections to process.
-        provider (str): The AI provider for content extraction.
-        api_token (str): The API token for authentication.
-        base_url (Optional[str]): The base URL for the API. Defaults to None.
-
-    Returns:
-        List[dict]: The list of extracted content blocks from all sections.
-    """
-
-    extracted_content = []
-    if provider.startswith("groq/"):
-        # Sequential processing with a delay
-        for section in sections:
-            extracted_content.extend(
-                extract_blocks(url, section, provider, api_token, base_url=base_url)
-            )
-            time.sleep(0.5)  # 500 ms delay between each processing
-    else:
-        # Parallel processing using ThreadPoolExecutor
-        with ThreadPoolExecutor() as executor:
-            futures = [
-                executor.submit(
-                    extract_blocks, url, section, provider, api_token, base_url=base_url
-                )
-                for section in sections
-            ]
-            for future in as_completed(futures):
-                extracted_content.extend(future.result())
-
-    return extracted_content
 
 
 def wrap_text(draw, text, font, max_width):
@@ -1426,24 +1329,17 @@ def normalize_url(
     # ── path ──
     # Strip duplicate slashes and trailing “/” (except root)
     path = quote(unquote(parsed.path))
-    if path.endswith('/') and path != '/':
-        path = path.rstrip('/')
+    if path.endswith("/") and path != "/":
+        path = path.rstrip("/")
 
     # ── query ──
     query = parsed.query
     if query:
         params = [(k.lower(), v) for k, v in parse_qsl(query, keep_blank_values=True)]
-        query = urlencode(params, doseq=True) if params else ''
+        query = urlencode(params, doseq=True) if params else ""
 
     # Re-assemble
-    return urlunparse((
-        parsed.scheme,
-        netloc,
-        path,
-        parsed.params,
-        query,
-        ''
-    ))
+    return urlunparse((parsed.scheme, netloc, path, parsed.params, query, ""))
 
 
 def normalize_url_for_deep_crawl(href, base_url):
@@ -1454,70 +1350,76 @@ def normalize_url_for_deep_crawl(href, base_url):
 
     # Use urljoin to handle relative URLs
     full_url = urljoin(base_url, href.strip())
-    
+
     # Parse the URL for normalization
     parsed = urlparse(full_url)
-    
+
     # Convert hostname to lowercase
     netloc = parsed.netloc.lower()
-    
+
     # Remove fragment entirely
-    fragment = ''
-    
+    fragment = ""
+
     # Normalize query parameters if needed
     query = parsed.query
     if query:
         # Parse query parameters
         params = parse_qs(query)
-        
+
         # Remove tracking parameters (example - customize as needed)
-        tracking_params = ['utm_source', 'utm_medium', 'utm_campaign', 'ref', 'fbclid']
+        tracking_params = ["utm_source", "utm_medium", "utm_campaign", "ref", "fbclid"]
         for param in tracking_params:
             if param in params:
                 del params[param]
-                
+
         # Rebuild query string, sorted for consistency
-        query = urlencode(params, doseq=True) if params else ''
-    
+        query = urlencode(params, doseq=True) if params else ""
+
     # Build normalized URL
-    normalized = urlunparse((
-        parsed.scheme,
-        netloc,
-        parsed.path.rstrip('/'),  # Normalize trailing slash
-        parsed.params,
-        query,
-        fragment
-    ))
-    
+    normalized = urlunparse(
+        (
+            parsed.scheme,
+            netloc,
+            parsed.path.rstrip("/"),  # Normalize trailing slash
+            parsed.params,
+            query,
+            fragment,
+        )
+    )
+
     return normalized
+
 
 @lru_cache(maxsize=10000)
 def efficient_normalize_url_for_deep_crawl(href, base_url):
     """Efficient URL normalization with proper parsing"""
     from urllib.parse import urljoin
-    
+
     if not href:
         return None
-    
+
     # Resolve relative URLs
     full_url = urljoin(base_url, href.strip())
-    
+
     # Use proper URL parsing
     parsed = urlparse(full_url)
-    
+
     # Only perform the most critical normalizations
     # 1. Lowercase hostname
     # 2. Remove fragment
-    normalized = urlunparse((
-        parsed.scheme,
-        parsed.netloc.lower(),
-        parsed.path.rstrip('/'),
-        parsed.params,
-        parsed.query,
-        ''  # Remove fragment
-    ))
-    
+    normalized = urlunparse(
+        (
+            parsed.scheme,
+            parsed.netloc.lower(),
+            parsed.path.rstrip("/"),
+            parsed.params,
+            parsed.query,
+            "",  # Remove fragment
+        )
+    )
+
     return normalized
+
 
 def get_base_domain(url: str) -> str:
     """
@@ -1978,28 +1880,31 @@ def get_error_context(exc_info, context_lines: int = 5):
         "code_context": code_context,
     }
 
+
 def truncate(value, threshold):
     if len(value) > threshold:
-        return value[:threshold] + '...'  # Add ellipsis to indicate truncation
+        return value[:threshold] + "..."  # Add ellipsis to indicate truncation
     return value
+
 
 def optimize_html(html_str, threshold=200):
     root = lxml.html.fromstring(html_str)
-    
+
     for _element in root.iter():
         # Process attributes
         for attr in list(_element.attrib):
             _element.attrib[attr] = truncate(_element.attrib[attr], threshold)
-        
+
         # Process text content
         if _element.text and len(_element.text) > threshold:
             _element.text = truncate(_element.text, threshold)
-            
+
         # Process tail text
         if _element.tail and len(_element.tail) > threshold:
             _element.tail = truncate(_element.tail, threshold)
-    
-    return lxml.html.tostring(root, encoding='unicode', pretty_print=False)
+
+    return lxml.html.tostring(root, encoding="unicode", pretty_print=False)
+
 
 class HeadPeekr:
     @staticmethod
@@ -2007,24 +1912,24 @@ class HeadPeekr:
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; CrawlBot/1.0)",
             "Accept": "text/html",
-            "Connection": "close"  # Force close after response
+            "Connection": "close",  # Force close after response
         }
         try:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.get(url, headers=headers, follow_redirects=True)
-                
+
                 # Handle redirects explicitly by using the final URL
                 if response.url != url:
                     url = str(response.url)
                     response = await client.get(url, headers=headers)
-                
+
                 content = b""
                 async for chunk in response.aiter_bytes():
                     content += chunk
                     if b"</head>" in content:
                         break  # Stop after detecting </head>
                 return content.split(b"</head>")[0] + b"</head>"
-        except (httpx.HTTPError, gaierror) :
+        except (httpx.HTTPError, gaierror):
             return None
 
     @staticmethod
@@ -2037,37 +1942,42 @@ class HeadPeekr:
     @staticmethod
     def extract_meta_tags(head_content: str):
         meta_tags = {}
-        
+
         # Find all meta tags
-        meta_pattern = r'<meta[^>]+>'
+        meta_pattern = r"<meta[^>]+>"
         for meta_tag in re.finditer(meta_pattern, head_content):
             tag = meta_tag.group(0)
-            
+
             # Extract name/property and content
             name_match = re.search(r'name=["\'](.*?)["\']', tag)
             property_match = re.search(r'property=["\'](.*?)["\']', tag)
             content_match = re.search(r'content=["\'](.*?)["\']', tag)
-            
+
             if content_match and (name_match or property_match):
                 key = name_match.group(1) if name_match else property_match.group(1)
                 meta_tags[key] = content_match.group(1)
-                
+
         return meta_tags
 
     def get_title(head_content: str):
-        title_match = re.search(r'<title>(.*?)</title>', head_content, re.IGNORECASE | re.DOTALL)
+        title_match = re.search(
+            r"<title>(.*?)</title>", head_content, re.IGNORECASE | re.DOTALL
+        )
         return title_match.group(1) if title_match else None
 
-def preprocess_html_for_schema(html_content, text_threshold=100, attr_value_threshold=200, max_size=100000):
+
+def preprocess_html_for_schema(
+    html_content, text_threshold=100, attr_value_threshold=200, max_size=100000
+):
     """
     Preprocess HTML to reduce size while preserving structure for schema generation.
-    
+
     Args:
         html_content (str): Raw HTML content
         text_threshold (int): Maximum length for text nodes before truncation
         attr_value_threshold (int): Maximum length for attribute values before truncation
         max_size (int): Target maximum size for output HTML
-        
+
     Returns:
         str: Preprocessed HTML content
     """
@@ -2075,83 +1985,98 @@ def preprocess_html_for_schema(html_content, text_threshold=100, attr_value_thre
         # Parse HTML with error recovery
         parser = etree.HTMLParser(remove_comments=True, remove_blank_text=True)
         tree = lhtml.fromstring(html_content, parser=parser)
-        
+
         # 1. Remove HEAD section (keep only BODY)
-        head_elements = tree.xpath('//head')
+        head_elements = tree.xpath("//head")
         for head in head_elements:
             if head.getparent() is not None:
                 head.getparent().remove(head)
-        
+
         # 2. Define tags to remove completely
         tags_to_remove = [
-            'script', 'style', 'noscript', 'iframe', 'canvas', 'svg',
-            'video', 'audio', 'source', 'track', 'map', 'area'
+            "script",
+            "style",
+            "noscript",
+            "iframe",
+            "canvas",
+            "svg",
+            "video",
+            "audio",
+            "source",
+            "track",
+            "map",
+            "area",
         ]
-        
+
         # Remove unwanted elements
         for tag in tags_to_remove:
-            elements = tree.xpath(f'//{tag}')
+            elements = tree.xpath(f"//{tag}")
             for element in elements:
                 if element.getparent() is not None:
                     element.getparent().remove(element)
-        
+
         # 3. Process remaining elements to clean attributes and truncate text
         for element in tree.iter():
             # Skip if we're at the root level
             if element.getparent() is None:
                 continue
-                
+
             # Clean non-essential attributes but preserve structural ones
             # attribs_to_keep = {'id', 'class', 'name', 'href', 'src', 'type', 'value', 'data-'}
 
             # This is more aggressive than the previous version
-            attribs_to_keep = {'id', 'class', 'name', 'type', 'value'}
+            attribs_to_keep = {"id", "class", "name", "type", "value"}
 
             # attributes_hates_truncate = ['id', 'class', "data-"]
 
             # This means, I don't care, if an attribute is too long, truncate it, go and find a better css selector to build a schema
             attributes_hates_truncate = []
-            
+
             # Process each attribute
             for attrib in list(element.attrib.keys()):
                 # Keep if it's essential or starts with data-
-                if not (attrib in attribs_to_keep or attrib.startswith('data-')):
+                if not (attrib in attribs_to_keep or attrib.startswith("data-")):
                     element.attrib.pop(attrib)
                 # Truncate long attribute values except for selectors
-                elif attrib not in attributes_hates_truncate and len(element.attrib[attrib]) > attr_value_threshold:
-                    element.attrib[attrib] = element.attrib[attrib][:attr_value_threshold] + '...'
-            
+                elif (
+                    attrib not in attributes_hates_truncate
+                    and len(element.attrib[attrib]) > attr_value_threshold
+                ):
+                    element.attrib[attrib] = (
+                        element.attrib[attrib][:attr_value_threshold] + "..."
+                    )
+
             # Truncate text content if it's too long
             if element.text and len(element.text.strip()) > text_threshold:
-                element.text = element.text.strip()[:text_threshold] + '...'
-                
+                element.text = element.text.strip()[:text_threshold] + "..."
+
             # Also truncate tail text if present
             if element.tail and len(element.tail.strip()) > text_threshold:
-                element.tail = element.tail.strip()[:text_threshold] + '...'
+                element.tail = element.tail.strip()[:text_threshold] + "..."
 
         # 4. Detect duplicates and drop them in a single pass
         seen: dict[tuple, None] = {}
-        for el in list(tree.xpath('//*[@class]')):          # snapshot once, XPath is fast
+        for el in list(tree.xpath("//*[@class]")):  # snapshot once, XPath is fast
             parent = el.getparent()
             if parent is None:
                 continue
 
-            cls = el.get('class')
+            cls = el.get("class")
             if not cls:
                 continue
 
             # ── build signature ───────────────────────────────────────────
-            h = xxhash.xxh64()                              # stream, no big join()
+            h = xxhash.xxh64()  # stream, no big join()
             for txt in el.itertext():
                 h.update(txt)
-            sig = (el.tag, cls, h.intdigest())             # tuple cheaper & hashable
+            sig = (el.tag, cls, h.intdigest())  # tuple cheaper & hashable
 
             # ── first seen? keep – else drop ─────────────
             if sig in seen and parent is not None:
-                parent.remove(el)                           # duplicate
+                parent.remove(el)  # duplicate
             else:
                 seen[sig] = None
-        
+
         # # 4. Find repeated patterns and keep only a few examples
         # # This is a simplistic approach - more sophisticated pattern detection could be implemented
         # pattern_elements = {}
@@ -2159,7 +2084,7 @@ def preprocess_html_for_schema(html_content, text_threshold=100, attr_value_thre
         #     parent = element.getparent()
         #     if parent is None:
         #         continue
-                
+
         #     # Create a signature based on tag and classes
         #     classes = element.get('class', '')
         #     if not classes:
@@ -2167,12 +2092,12 @@ def preprocess_html_for_schema(html_content, text_threshold=100, attr_value_thre
         #     innert_text = ''.join(element.xpath('.//text()'))
         #     innert_text_hash = xxhash.xxh64(innert_text.encode()).hexdigest()
         #     signature = f"{element.tag}.{classes}.{innert_text_hash}"
-            
+
         #     if signature in pattern_elements:
         #         pattern_elements[signature].append(element)
         #     else:
         #         pattern_elements[signature] = [element]
-        
+
         # # Keep only first examples of each repeating pattern
         # for signature, elements in pattern_elements.items():
         #     if len(elements) > 1:
@@ -2181,7 +2106,6 @@ def preprocess_html_for_schema(html_content, text_threshold=100, attr_value_thre
         #             if element.getparent() is not None:
         #                 element.getparent().remove(element)
 
-
         # # Keep only 3 examples of each repeating pattern
         # for signature, elements in pattern_elements.items():
         #     if len(elements) > 3:
@@ -2189,19 +2113,20 @@ def preprocess_html_for_schema(html_content, text_threshold=100, attr_value_thre
         #         for element in elements[2:-1]:
         #             if element.getparent() is not None:
         #                 element.getparent().remove(element)
-        
+
         # 5. Convert back to string
-        result = etree.tostring(tree, encoding='unicode', method='html')
-        
+        result = etree.tostring(tree, encoding="unicode", method="html")
+
         # If still over the size limit, apply more aggressive truncation
         if len(result) > max_size:
             return result[:max_size] + "..."
-            
+
         return result
-    
+
     except Exception:
         # Fallback for parsing errors
-        return html_content[:max_size] if len(html_content) > max_size else html_content    
+        return html_content[:max_size] if len(html_content) > max_size else html_content
+
 
 def start_colab_display_server():
     """
@@ -2215,33 +2140,49 @@ def start_colab_display_server():
         from IPython.display import IFrame, display
     except ImportError:
         raise RuntimeError("This function must be run in Google Colab environment.")
-    
+
     os.environ["DISPLAY"] = ":99"
-    
+
     # Xvfb
     xvfb = subprocess.Popen(["Xvfb", ":99", "-screen", "0", "1280x720x24"])
     time.sleep(2)
-    
+
     # minimal window manager
     fluxbox = subprocess.Popen(["fluxbox"])
-    
+
     # VNC → X
-    x11vnc = subprocess.Popen(["x11vnc",
-                              "-display", ":99",
-                              "-nopw", "-forever", "-shared",
-                              "-rfbport", "5900", "-quiet"])
-    
+    x11vnc = subprocess.Popen(
+        [
+            "x11vnc",
+            "-display",
+            ":99",
+            "-nopw",
+            "-forever",
+            "-shared",
+            "-rfbport",
+            "5900",
+            "-quiet",
+        ]
+    )
+
     # websockify → VNC
-    novnc = subprocess.Popen(["/opt/novnc/utils/websockify/run",
-                              "6080", "localhost:5900",
-                              "--web", "/opt/novnc"])
-    
+    novnc = subprocess.Popen(
+        [
+            "/opt/novnc/utils/websockify/run",
+            "6080",
+            "localhost:5900",
+            "--web",
+            "/opt/novnc",
+        ]
+    )
+
     time.sleep(2)  # give ports a moment
-    
+
     # Colab proxy url
     url = output.eval_js("google.colab.kernel.proxyPort(6080)")
-    display(IFrame(f"{url}/vnc.html?autoconnect=true&resize=scale", width=1024, height=768))
-
+    display(
+        IFrame(f"{url}/vnc.html?autoconnect=true&resize=scale", width=1024, height=768)
+    )
 
 
 def setup_colab_environment():
@@ -2249,12 +2190,16 @@ def setup_colab_environment():
     Alternative setup using IPython magic commands
     """
     from IPython import get_ipython
+
     ipython = get_ipython()
-    
+
     print("🚀 Setting up Crawl4AI environment in Google Colab...")
-    
+
     # Run the bash commands
-    ipython.run_cell_magic('bash', '', '''
+    ipython.run_cell_magic(
+        "bash",
+        "",
+        """
 set -e
 
 echo "📦 Installing system dependencies..."
@@ -2267,67 +2212,81 @@ git clone https://github.com/novnc/websockify    /opt/novnc/utils/websockify
 
 pip install -q nest_asyncio google-colab
 echo "✅ Setup complete!"
-''')
+""",
+    )
 
 
 # Link Quality Scoring Functions
-def extract_page_context(page_title: str, headlines_text: str, meta_description: str, base_url: str) -> dict:
+def extract_page_context(
+    page_title: str, headlines_text: str, meta_description: str, base_url: str
+) -> dict:
     """
     Extract page context for link scoring - called ONCE per page for performance.
     Parser-agnostic function that takes pre-extracted data.
-    
+
     Args:
         page_title: Title of the page
         headlines_text: Combined text from h1, h2, h3 elements
         meta_description: Meta description content
         base_url: Base URL of the page
-        
+
     Returns:
         Dictionary containing page context data for fast link scoring
     """
     context = {
-        'terms': set(),
-        'headlines': headlines_text or '',
-        'meta_description': meta_description or '',
-        'domain': '',
-        'is_docs_site': False
+        "terms": set(),
+        "headlines": headlines_text or "",
+        "meta_description": meta_description or "",
+        "domain": "",
+        "is_docs_site": False,
     }
-    
+
     try:
         from urllib.parse import urlparse
+
         parsed = urlparse(base_url)
-        context['domain'] = parsed.netloc.lower()
-        
+        context["domain"] = parsed.netloc.lower()
+
         # Check if this is a documentation/reference site
-        context['is_docs_site'] = any(indicator in context['domain'] 
-                                    for indicator in ['docs.', 'api.', 'developer.', 'reference.'])
-        
+        context["is_docs_site"] = any(
+            indicator in context["domain"]
+            for indicator in ["docs.", "api.", "developer.", "reference."]
+        )
+
         # Create term set for fast intersection (performance optimization)
-        all_text = ((page_title or '') + ' ' + context['headlines'] + ' ' + context['meta_description']).lower()
+        all_text = (
+            (page_title or "")
+            + " "
+            + context["headlines"]
+            + " "
+            + context["meta_description"]
+        ).lower()
         # Simple tokenization - fast and sufficient for scoring
-        context['terms'] = set(word.strip('.,!?;:"()[]{}') 
-                             for word in all_text.split() 
-                             if len(word.strip('.,!?;:"()[]{}')) > 2)
-                             
+        context["terms"] = set(
+            word.strip('.,!?;:"()[]{}')
+            for word in all_text.split()
+            if len(word.strip('.,!?;:"()[]{}')) > 2
+        )
+
     except Exception:
         # Fail gracefully - return empty context
         pass
-    
+
     return context
 
 
 def calculate_link_intrinsic_score(
-    link_text: str, 
-    url: str, 
-    title_attr: str, 
-    class_attr: str, 
-    rel_attr: str, 
-    page_context: dict
+    link_text: str,
+    url: str,
+    title_attr: str,
+    class_attr: str,
+    rel_attr: str,
+    page_context: dict,
 ) -> float:
     """
     Ultra-fast link quality scoring using only provided data (no DOM access needed).
     Parser-agnostic function.
-    
+
     Args:
         link_text: Text content of the link
         url: Link URL
@@ -2335,98 +2294,135 @@ def calculate_link_intrinsic_score(
         class_attr: Class attribute of the link
         rel_attr: Rel attribute of the link
         page_context: Pre-computed page context from extract_page_context()
-        
+
     Returns:
         Quality score (0.0 - 10.0), higher is better
     """
     score = 0.0
-    
+
     try:
         # 1. ATTRIBUTE QUALITY (string analysis - very fast)
         if title_attr and len(title_attr.strip()) > 3:
             score += 1.0
-            
-        class_str = (class_attr or '').lower()
+
+        class_str = (class_attr or "").lower()
         # Navigation/important classes boost score
-        if any(nav_class in class_str for nav_class in ['nav', 'menu', 'primary', 'main', 'important']):
+        if any(
+            nav_class in class_str
+            for nav_class in ["nav", "menu", "primary", "main", "important"]
+        ):
             score += 1.5
-        # Marketing/ad classes reduce score  
-        if any(bad_class in class_str for bad_class in ['ad', 'sponsor', 'track', 'promo', 'banner']):
+        # Marketing/ad classes reduce score
+        if any(
+            bad_class in class_str
+            for bad_class in ["ad", "sponsor", "track", "promo", "banner"]
+        ):
             score -= 1.0
-            
-        rel_str = (rel_attr or '').lower()
+
+        rel_str = (rel_attr or "").lower()
         # Semantic rel values
-        if any(good_rel in rel_str for good_rel in ['canonical', 'next', 'prev', 'chapter']):
+        if any(
+            good_rel in rel_str for good_rel in ["canonical", "next", "prev", "chapter"]
+        ):
             score += 1.0
-        if any(bad_rel in rel_str for bad_rel in ['nofollow', 'sponsored', 'ugc']):
+        if any(bad_rel in rel_str for bad_rel in ["nofollow", "sponsored", "ugc"]):
             score -= 0.5
-            
+
         # 2. URL STRUCTURE QUALITY (string operations - very fast)
         url_lower = url.lower()
-        
+
         # High-value path patterns
-        if any(good_path in url_lower for good_path in ['/docs/', '/api/', '/guide/', '/tutorial/', '/reference/', '/manual/']):
+        if any(
+            good_path in url_lower
+            for good_path in [
+                "/docs/",
+                "/api/",
+                "/guide/",
+                "/tutorial/",
+                "/reference/",
+                "/manual/",
+            ]
+        ):
             score += 2.0
-        elif any(medium_path in url_lower for medium_path in ['/blog/', '/article/', '/post/', '/news/']):
+        elif any(
+            medium_path in url_lower
+            for medium_path in ["/blog/", "/article/", "/post/", "/news/"]
+        ):
             score += 1.0
-            
+
         # Penalize certain patterns
-        if any(bad_path in url_lower for bad_path in ['/admin/', '/login/', '/cart/', '/checkout/', '/track/', '/click/']):
+        if any(
+            bad_path in url_lower
+            for bad_path in [
+                "/admin/",
+                "/login/",
+                "/cart/",
+                "/checkout/",
+                "/track/",
+                "/click/",
+            ]
+        ):
             score -= 1.5
-            
+
         # URL depth (shallow URLs often more important)
-        url_depth = url.count('/') - 2  # Subtract protocol and domain
+        url_depth = url.count("/") - 2  # Subtract protocol and domain
         if url_depth <= 2:
             score += 1.0
         elif url_depth > 5:
             score -= 0.5
-            
+
         # HTTPS bonus
-        if url.startswith('https://'):
+        if url.startswith("https://"):
             score += 0.5
-            
+
         # 3. TEXT QUALITY (string analysis - very fast)
         if link_text:
             text_clean = link_text.strip()
             if len(text_clean) > 3:
                 score += 1.0
-                
+
             # Multi-word links are usually more descriptive
             word_count = len(text_clean.split())
             if word_count >= 2:
                 score += 0.5
             if word_count >= 4:
                 score += 0.5
-                
+
             # Avoid generic link text
-            generic_texts = ['click here', 'read more', 'more info', 'link', 'here']
+            generic_texts = ["click here", "read more", "more info", "link", "here"]
             if text_clean.lower() in generic_texts:
                 score -= 1.0
-                
+
         # 4. CONTEXTUAL RELEVANCE (pre-computed page terms - very fast)
-        if page_context.get('terms') and link_text:
-            link_words = set(word.strip('.,!?;:"()[]{}').lower() 
-                           for word in link_text.split() 
-                           if len(word.strip('.,!?;:"()[]{}')) > 2)
-            
+        if page_context.get("terms") and link_text:
+            link_words = set(
+                word.strip('.,!?;:"()[]{}').lower()
+                for word in link_text.split()
+                if len(word.strip('.,!?;:"()[]{}')) > 2
+            )
+
             if link_words:
                 # Calculate word overlap ratio
-                overlap = len(link_words & page_context['terms'])
+                overlap = len(link_words & page_context["terms"])
                 if overlap > 0:
-                    relevance_ratio = overlap / min(len(link_words), 10)  # Cap to avoid over-weighting
+                    relevance_ratio = overlap / min(
+                        len(link_words), 10
+                    )  # Cap to avoid over-weighting
                     score += relevance_ratio * 2.0  # Up to 2 points for relevance
-                    
+
         # 5. DOMAIN CONTEXT BONUSES (very fast string checks)
-        if page_context.get('is_docs_site', False):
+        if page_context.get("is_docs_site", False):
             # Documentation sites: prioritize internal navigation
-            if link_text and any(doc_keyword in link_text.lower() 
-                               for doc_keyword in ['api', 'reference', 'guide', 'tutorial', 'example']):
+            if link_text and any(
+                doc_keyword in link_text.lower()
+                for doc_keyword in ["api", "reference", "guide", "tutorial", "example"]
+            ):
                 score += 1.0
-                
+
     except Exception:
         # Fail gracefully - return minimal score
         score = 0.5
-        
+
     # Ensure score is within reasonable bounds
     return max(0.0, min(score, 10.0))
 
@@ -2435,20 +2431,20 @@ def calculate_total_score(
     intrinsic_score: float | None = None,
     contextual_score: float | None = None,
     score_links_enabled: bool = False,
-    query_provided: bool = False
+    query_provided: bool = False,
 ) -> float:
     """
     Calculate combined total score from intrinsic and contextual scores with smart fallbacks.
-    
+
     Args:
         intrinsic_score: Quality score based on URL structure, text, and context (0-10)
         contextual_score: BM25 relevance score based on query and head content (0-1 typically)
         score_links_enabled: Whether link scoring is enabled
         query_provided: Whether a query was provided for contextual scoring
-        
+
     Returns:
         Combined total score (0-10 scale)
-        
+
     Scoring Logic:
         - No scoring: return 5.0 (neutral score)
         - Only intrinsic: return normalized intrinsic score
@@ -2458,84 +2454,49 @@ def calculate_total_score(
     # Case 1: No scoring enabled at all
     if not score_links_enabled:
         return 5.0  # Neutral score - all links treated equally
-    
+
     # Normalize scores to handle None values
     intrinsic = intrinsic_score if intrinsic_score is not None else 0.0
     contextual = contextual_score if contextual_score is not None else 0.0
-    
+
     # Case 2: Only intrinsic scoring (no query provided or no head extraction)
     if not query_provided or contextual_score is None:
         # Use intrinsic score directly (already 0-10 scale)
         return max(0.0, min(intrinsic, 10.0))
-    
+
     # Case 3: Both intrinsic and contextual scores available
     # Scale contextual score (typically 0-1) to 0-10 range
     contextual_scaled = min(contextual * 10.0, 10.0)
-    
+
     # Weighted combination: 70% intrinsic (structure/content quality) + 30% contextual (query relevance)
     # This gives more weight to link quality while still considering relevance
     total = (intrinsic * 0.7) + (contextual_scaled * 0.3)
-    
+
     return max(0.0, min(total, 10.0))
 
 
 # Embedding utilities
 async def get_text_embeddings(
-    texts: list[str], 
-    llm_config: dict | None = None,
+    texts: list[str],
     model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-    batch_size: int = 32
+    batch_size: int = 32,
 ) -> np.ndarray:
     """
-    Compute embeddings for a list of texts using specified model.
-    
+    Compute embeddings for a list of texts using sentence-transformers.
+
     Args:
         texts: List of texts to embed
-        llm_config: Optional LLM configuration for API-based embeddings
-        model_name: Model name (used when llm_config is None)
+        model_name: Model name for sentence-transformers
         batch_size: Batch size for processing
-        
+
     Returns:
         numpy array of embeddings
     """
     import numpy as np
-    
+
     if not texts:
         return np.array([])
-    
-    # If LLMConfig provided, use litellm for embeddings
-    if llm_config is not None:
-        from litellm import aembedding
-        
-        # Get embedding model from config or use default
-        embedding_model = llm_config.get('provider', 'text-embedding-3-small')
-        api_base = llm_config.get('base_url', llm_config.get('api_base'))
-        
-        # Prepare kwargs
-        kwargs = {
-            'model': embedding_model,
-            'input': texts,
-            'api_key': llm_config.get('api_token', llm_config.get('api_key'))
-        }
-        
-        if api_base:
-            kwargs['api_base'] = api_base
-            
-        # Handle OpenAI-compatible endpoints
-        if api_base and 'openai/' not in embedding_model:
-            kwargs['model'] = f"openai/{embedding_model}"
-        
-        # Get embeddings
-        response = await aembedding(**kwargs)
-        
-        # Extract embeddings from response
-        embeddings = []
-        for item in response.data:
-            embeddings.append(item['embedding'])
-            
-        return np.array(embeddings)
-    
-    # Default: use sentence-transformers
+
     # Lazy load to avoid importing heavy libraries unless needed
     try:
         from sentence_transformers import SentenceTransformer
@@ -2546,7 +2507,7 @@ async def get_text_embeddings(
         )
 
     # Cache the model in function attribute to avoid reloading
-    if not hasattr(get_text_embeddings, '_models'):
+    if not hasattr(get_text_embeddings, "_models"):
         get_text_embeddings._models = {}
 
     if model_name not in get_text_embeddings._models:
@@ -2556,10 +2517,7 @@ async def get_text_embeddings(
 
     # Batch encode for efficiency
     embeddings = encoder.encode(
-        texts,
-        batch_size=batch_size,
-        show_progress_bar=False,
-        convert_to_numpy=True
+        texts, batch_size=batch_size, show_progress_bar=False, convert_to_numpy=True
     )
 
     return embeddings
@@ -2567,17 +2525,17 @@ async def get_text_embeddings(
 
 def get_text_embeddings_sync(
     texts: list[str],
-    llm_config: dict | None = None,
     model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
-    batch_size: int = 32
+    batch_size: int = 32,
 ) -> np.ndarray:
     """Synchronous wrapper for get_text_embeddings"""
-    return asyncio.run(get_text_embeddings(texts, llm_config, model_name, batch_size))
+    return asyncio.run(get_text_embeddings(texts, model_name, batch_size))
 
 
 def cosine_similarity(vec1: np.ndarray, vec2: np.ndarray) -> float:
     """Calculate cosine similarity between two vectors"""
     import numpy as np
+
     dot_product = np.dot(vec1, vec2)
     norm_product = np.linalg.norm(vec1) * np.linalg.norm(vec2)
     return float(dot_product / norm_product) if norm_product != 0 else 0.0
@@ -2590,36 +2548,37 @@ def cosine_distance(vec1: np.ndarray, vec2: np.ndarray) -> float:
 
 # Memory utilities
 
+
 def get_true_available_memory_gb() -> float:
     """Get truly available memory including inactive pages (cross-platform)"""
     vm = psutil.virtual_memory()
 
-    if platform.system() == 'Darwin':  # macOS
+    if platform.system() == "Darwin":  # macOS
         # On macOS, we need to include inactive memory too
         try:
             # Use vm_stat to get accurate values
-            result = subprocess.run(['vm_stat'], capture_output=True, text=True)
-            lines = result.stdout.split('\n')
+            result = subprocess.run(["vm_stat"], capture_output=True, text=True)
+            lines = result.stdout.split("\n")
 
             page_size = 16384  # macOS page size
             pages = {}
 
             for line in lines:
-                if 'Pages free:' in line:
-                    pages['free'] = int(line.split()[-1].rstrip('.'))
-                elif 'Pages inactive:' in line:
-                    pages['inactive'] = int(line.split()[-1].rstrip('.'))
-                elif 'Pages speculative:' in line:
-                    pages['speculative'] = int(line.split()[-1].rstrip('.'))
-                elif 'Pages purgeable:' in line:
-                    pages['purgeable'] = int(line.split()[-1].rstrip('.'))
+                if "Pages free:" in line:
+                    pages["free"] = int(line.split()[-1].rstrip("."))
+                elif "Pages inactive:" in line:
+                    pages["inactive"] = int(line.split()[-1].rstrip("."))
+                elif "Pages speculative:" in line:
+                    pages["speculative"] = int(line.split()[-1].rstrip("."))
+                elif "Pages purgeable:" in line:
+                    pages["purgeable"] = int(line.split()[-1].rstrip("."))
 
             # Calculate total available (free + inactive + speculative + purgeable)
             total_available_pages = (
-                pages.get('free', 0) + 
-                pages.get('inactive', 0) + 
-                pages.get('speculative', 0) + 
-                pages.get('purgeable', 0)
+                pages.get("free", 0)
+                + pages.get("inactive", 0)
+                + pages.get("speculative", 0)
+                + pages.get("purgeable", 0)
             )
             available_gb = (total_available_pages * page_size) / (1024**3)
 
@@ -2635,17 +2594,17 @@ def get_true_available_memory_gb() -> float:
 def get_true_memory_usage_percent() -> float:
     """
     Get memory usage percentage that accounts for platform differences.
-    
+
     Returns:
         float: Memory usage percentage (0-100)
     """
     vm = psutil.virtual_memory()
     total_gb = vm.total / (1024**3)
     available_gb = get_true_available_memory_gb()
-    
+
     # Calculate used percentage based on truly available memory
     used_percent = 100.0 * (total_gb - available_gb) / total_gb
-    
+
     # Ensure it's within valid range
     return max(0.0, min(100.0, used_percent))
 
@@ -2653,7 +2612,7 @@ def get_true_memory_usage_percent() -> float:
 def get_memory_stats() -> tuple[float, float, float]:
     """
     Get comprehensive memory statistics.
-    
+
     Returns:
         Tuple[float, float, float]: (used_percent, available_gb, total_gb)
     """
@@ -2661,5 +2620,5 @@ def get_memory_stats() -> tuple[float, float, float]:
     total_gb = vm.total / (1024**3)
     available_gb = get_true_available_memory_gb()
     used_percent = get_true_memory_usage_percent()
-    
+
     return used_percent, available_gb, total_gb
