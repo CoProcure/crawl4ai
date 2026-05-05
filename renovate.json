@@ -1,0 +1,19 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended",
+    ":prConcurrentLimit10",
+    ":prHourlyLimitNone",
+    "schedule:nonOfficeHours"
+  ],
+  "lockFileMaintenance": {
+    "enabled": false
+  },
+  "packageRules": [
+    {
+      "matchManagers": ["pep621"],
+      "prConcurrentLimit": 4,
+      "minimumReleaseAge": "5d"
+    }
+  ]
+}
