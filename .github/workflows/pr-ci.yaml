@@ -48,7 +48,7 @@ jobs:
             libjpeg-dev \
             libgeos-dev
       - name: Setup uv
-        uses: astral-sh/setup-uv@v7
+        uses: astral-sh/setup-uv@v9.0.0
         with:
           python-version: ${{ env.PYTHON_VERSION }}
           activate-environment: true
