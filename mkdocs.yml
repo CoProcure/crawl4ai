@@ -17,7 +17,6 @@ nav:
     - "LLM Context Builder": "apps/llmtxt/index.html"
   - Setup & Installation:
     - "Installation": "core/installation.md"
-    - "Docker Deployment": "core/docker-deployment.md"
   - "Blog & Changelog":
     - "Blog Home": "blog/index.md"
     - "Changelog": "https://github.com/unclecode/crawl4ai/blob/main/CHANGELOG.md"
