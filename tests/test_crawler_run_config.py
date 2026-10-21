@@ -1,8 +1,35 @@
+import http.server
+import threading
+
 import pytest
 
 from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, LinkPreviewConfig
 from crawl4ai.async_configs import MatchMode
-from tests.helpers import EXAMPLE_URL
+from tests.helpers import EXAMPLE_RAW_HTML, EXAMPLE_URL
+
+
+class ExampleHtmlHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        body = EXAMPLE_RAW_HTML.encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, format, *args):
+        pass
+
+
+@pytest.fixture
+def example_html_url():
+    # css_selector is only applied when the browser loads the page, which raw: and
+    # file:// URLs skip, so serve fixed markup over HTTP instead of a live site.
+    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ExampleHtmlHandler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    yield f"http://127.0.0.1:{server.server_port}/"
+    server.shutdown()
+    server.server_close()
 
 
 def test_is_match_single_pattern():
@@ -119,10 +146,10 @@ async def test_link_preview():
     assert all("total_score" in il for il in internal_links)
 
 @pytest.mark.asyncio
-async def test_css_selector():
+async def test_css_selector(example_html_url):
     async with AsyncWebCrawler() as crawler:
         result = await crawler.arun(
-            url=EXAMPLE_URL, config=CrawlerRunConfig(
+            url=example_html_url, config=CrawlerRunConfig(
                 css_selector="h1, title"
             )
         )
