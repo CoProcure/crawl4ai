@@ -73,7 +73,6 @@ from .deep_crawling import (
     URLPatternFilter,
     URLScorer,
 )
-from .docker_client import Crawl4aiDockerClient
 from .extraction_strategy import (
     CosineStrategy,
     ExtractionStrategy,
@@ -170,7 +169,6 @@ __all__ = [
     "LinkPreview",
     "DisplayMode",
     "MarkdownGenerationResult",
-    "Crawl4aiDockerClient",
     "ProxyRotationStrategy",
     "RoundRobinProxyStrategy",
     "ProxyConfig",

@@ -58,9 +58,6 @@ CrawlerMonitor = Union['CrawlerMonitorType']
 DisplayMode = Union['DisplayModeType']
 RunManyReturn = Union['RunManyReturnType']
 
-# Docker client
-Crawl4aiDockerClient = Union['Crawl4aiDockerClientType']
-
 # Deep crawling types
 DeepCrawlStrategy = Union['DeepCrawlStrategyType']
 BFSDeepCrawlStrategy = Union['BFSDeepCrawlStrategyType']
@@ -222,8 +219,6 @@ if TYPE_CHECKING:
         URLScorer as URLScorerType,
     )
 
-    # Docker client
-    from .docker_client import Crawl4aiDockerClient as Crawl4aiDockerClientType
     from .extraction_strategy import (
         CosineStrategy as CosineStrategyType,
     )

@@ -189,7 +189,6 @@ No rate-limited APIs. No lock-in. Build and own your data pipeline with direct g
 <details>
 <summary>🚀 <strong>Deployment</strong></summary>
 
-- 🐳 **Dockerized Setup**: Optimized Docker image with FastAPI server for easy deployment.
 - 🔑 **Secure Authentication**: Built-in JWT token authentication for API security.
 - 🔄 **API Gateway**: One-click deployment with secure token authentication for API-based workflows.
 - 🌐 **Scalable Architecture**: Designed for mass-scale production and optimized server performance.
@@ -218,7 +217,7 @@ No rate-limited APIs. No lock-in. Build and own your data pipeline with direct g
 
 ## Installation 🛠️
 
-Crawl4AI offers flexible installation options to suit various use cases. You can install it as a Python package or use Docker.
+Crawl4AI offers flexible installation options to suit various use cases. You can install it as a Python package.
 
 <details>
 <summary>🐍 <strong>Using pip</strong></summary>
@@ -283,61 +282,6 @@ pip install -e ".[cosine]"          # With cosine similarity features
 pip install -e ".[sync]"            # With synchronous crawling (Selenium)
 pip install -e ".[all]"             # Install all optional features
 ```
-
-</details>
-
-<details>
-<summary>🐳 <strong>Docker Deployment</strong></summary>
-
-> 🚀 **Now Available!** Our completely redesigned Docker implementation is here! This new solution makes deployment more efficient and seamless than ever.
-
-### New Docker Features
-
-The new Docker implementation includes:
-- **Browser pooling** with page pre-warming for faster response times
-- **Interactive playground** to test and generate request code
-- **MCP integration** for direct connection to AI tools like Claude Code
-- **Comprehensive API endpoints** including HTML extraction, screenshots, PDF generation, and JavaScript execution
-- **Multi-architecture support** with automatic detection (AMD64/ARM64)
-- **Optimized resources** with improved memory management
-
-### Getting Started
-
-```bash
-# Pull and run the latest release candidate
-docker pull unclecode/crawl4ai:0.7.0
-docker run -d -p 11235:11235 --name crawl4ai --shm-size=1g unclecode/crawl4ai:0.7.0
-
-# Visit the playground at http://localhost:11235/playground
-```
-
-### Quick Test
-
-Run a quick test (works for both Docker options):
-
-```python
-import requests
-
-# Submit a crawl job
-response = requests.post(
-    "http://localhost:11235/crawl",
-    json={"urls": ["https://example.com"], "priority": 10}
-)
-if response.status_code == 200:
-    print("Crawl job submitted successfully.")
-    
-if "results" in response.json():
-    results = response.json()["results"]
-    print("Crawl job completed. Results:")
-    for result in results:
-        print(result)
-else:
-    task_id = response.json()["task_id"]
-    print(f"Crawl job submitted. Task ID:: {task_id}")
-    result = requests.get(f"http://localhost:11235/task/{task_id}")
-```
-
-For more examples, see our [Docker Examples](https://github.com/unclecode/crawl4ai/blob/main/docs/examples/docker_example.py). For advanced configuration, environment variables, and usage examples, see our [Docker Deployment Guide](https://docs.crawl4ai.com/basic/docker-deployment/).
 
 </details>
 

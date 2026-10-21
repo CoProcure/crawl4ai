@@ -75,15 +75,6 @@ This page provides a comprehensive list of example scripts that demonstrate vari
 | Language Support | Shows how to handle different languages during crawling. | [View Code](https://github.com/unclecode/crawl4ai/blob/main/docs/examples/language_support_example.py) |
 | Geolocation | Demonstrates how to use geolocation features. | [View Code](https://github.com/unclecode/crawl4ai/blob/main/docs/examples/use_geo_location.py) |
 
-## Docker & Deployment
-
-| Example | Description | Link |
-|---------|-------------|------|
-| Docker Config | Demonstrates how to create and use Docker configuration objects. | [View Code](https://github.com/unclecode/crawl4ai/blob/main/docs/examples/docker_config_obj.py) |
-| Docker Basic | A test suite for Docker deployment, showcasing various functionalities through the Docker API. | [View Code](https://github.com/unclecode/crawl4ai/blob/main/docs/examples/docker_example.py) |
-| Docker REST API | Shows how to interact with Crawl4AI Docker using REST API calls. | [View Code](https://github.com/unclecode/crawl4ai/blob/main/docs/examples/docker_python_rest_api.py) |
-| Docker SDK | Demonstrates using the Python SDK for Crawl4AI Docker. | [View Code](https://github.com/unclecode/crawl4ai/blob/main/docs/examples/docker_python_sdk.py) |
-
 ## Application Examples
 
 | Example | Description | Link |
