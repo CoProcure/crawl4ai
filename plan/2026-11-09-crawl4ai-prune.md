@@ -4,7 +4,8 @@ status: active
 tags: [crawl4ai, dependencies]
 created: 2026-11-09
 updated: 2026-11-09
-next_step: Implementer builds sc-36999 on branch sc-36999-prune-to-gazebo-usage
+last_pr: 113
+next_step: Refactor pass on PR 113, then watch CI and mark ready for review
 ---
 # Implementation Plan: Prune crawl4ai fork to gazebo's usage
 
@@ -36,7 +37,7 @@ and `uv run pytest tests/` green.
 ### PR 1: Prune crawl4ai to gazebo's usage
 - **Ticket:** sc-36999
 - **Branch:** `sc-36999-prune-to-gazebo-usage` (from `main`)
-- **Status:** In Progress
+- **Status:** Draft PR — [#113](https://github.com/CoProcure/crawl4ai/pull/113)
 - **Commit 1: dead code and upstream project files**
   - Delete `async_crawler_strategy.back.py`, `async_database.py`, `migrations.py`, `install.py`, `model_loader.py`, `cli.py`, `browser_profiler.py`, `adaptive_crawler.py`, `processors/`, `html2text/cli.py`, `html2text/__main__.py`.
   - Delete `unvalidated_tests/`, `docs/`, `mkdocs.yml`, `prompts/`, `README-first.md`, `CHANGELOG.md`, `cliff.toml`, `ROADMAP.md`, `JOURNAL.md`, `MISSION.md`, `PROGRESSIVE_CRAWLING.md`, `CONTRIBUTORS.md`, `SPONSORS.md`, `CODE_OF_CONDUCT.md`, `.env.txt`, `.github` issue and discussion templates, `setup.py`, `setup.cfg`.
@@ -75,8 +76,8 @@ and `uv run pytest tests/` green.
 
 ## Progress Tracking
 
-- [ ] sc-36999: Implementation complete
-- [ ] sc-36999: PR created
+- [x] sc-36999: Implementation complete
+- [x] sc-36999: PR created (#113)
 - [ ] sc-36999: Merged
 
 ## Review Patterns
@@ -85,3 +86,5 @@ and `uv run pytest tests/` green.
 
 **2026-11-09**: The user chose a single PR instead of three stacked ones, and chose to delete every unused run option, `css_selector` included.
 **2026-11-09**: `.claude/settings.local.json` (the upstream author's tracked local settings) stays out of scope; the user can remove it.
+**2026-11-09**: Implementation landed as draft #113: 23 modules and 6,283 lines (from 59 and 35,232), 9 runtime dependencies (from 33 entries). Commits 2 and 3 merged in practice, because the strategy, browser manager, and dispatcher read the run options removed in commit 2. `SeedingConfig` and `LinkPreviewConfig.query` (with BM25) were removed too. Gazebo's two crawl4ai test files pass against the branch.
+**2026-11-09**: Finding for gazebo: `LinkPreviewConfig(score_threshold=0.2)` without a `query` drops every link's `head_data`, because no link gets a relevance score to compare. This already happens on `main`; the prune keeps it. Gazebo should decide whether it wants `score_threshold`.
