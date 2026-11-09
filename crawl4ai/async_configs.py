@@ -426,37 +426,3 @@ class CrawlerRunConfig:
         config_dict = self.to_dict()
         config_dict.update(kwargs)
         return CrawlerRunConfig.from_kwargs(config_dict)
-
-
-class SeedingConfig:
-    def __init__(
-        self,
-        source: str = "sitemap+cc",
-        pattern: str | None = "*",
-        live_check: bool = False,
-        extract_head: bool = False,
-        max_urls: int = -1,
-        concurrency: int = 1000,
-        hits_per_sec: int = 5,
-        force: bool = False,
-        base_directory: str | None = None,
-        verbose: bool | None = None,
-        query: str | None = None,
-        score_threshold: float | None = None,
-        scoring_method: str = "bm25",
-        filter_nonsense_urls: bool = True,
-    ):
-        self.source = source
-        self.pattern = pattern
-        self.live_check = live_check
-        self.extract_head = extract_head
-        self.max_urls = max_urls
-        self.concurrency = concurrency
-        self.hits_per_sec = hits_per_sec
-        self.force = force
-        self.base_directory = base_directory
-        self.verbose = verbose
-        self.query = query
-        self.score_threshold = score_threshold
-        self.scoring_method = scoring_method
-        self.filter_nonsense_urls = filter_nonsense_urls

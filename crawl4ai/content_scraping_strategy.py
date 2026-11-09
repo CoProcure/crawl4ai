@@ -25,9 +25,6 @@ from .utils import (
     normalize_url,
 )
 
-DIMENSION_REGEX = re.compile(r"(\d+)(\D*)")
-
-
 # Function to parse srcset
 def parse_srcset(s: str) -> list[dict]:
     if not s:
@@ -47,18 +44,6 @@ def parse_srcset(s: str) -> list[dict]:
             )
             variants.append({"url": url, "width": width})
     return variants
-
-
-# Function to parse image height/width value and units
-def parse_dimension(dimension):
-    if dimension:
-        # match = re.match(r"(\d+)(\D*)", dimension)
-        match = DIMENSION_REGEX.match(dimension)
-        if match:
-            number = int(match.group(1))
-            unit = match.group(2) or "px"  # Default unit is 'px' if not specified
-            return number, unit
-    return None, None
 
 
 class ContentScrapingStrategy(ABC):
@@ -81,7 +66,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
     def __init__(self, cache_client: CacheClient = NoCacheClient(), logger=None):
         self.cache_client = cache_client
         self.logger = logger
-        self.DIMENSION_REGEX = re.compile(r"(\d+)(\D*)")
         self.BASE64_PATTERN = re.compile(r'data:image/[^;]+;base64,([^"]+)')
 
     def _log(self, level, message, tag="SCRAPE", **kwargs):

@@ -10,7 +10,7 @@ from typing import Any
 
 from crawl4ai.cache_client import CacheClient, NoCacheClient
 
-from .async_configs import CrawlerRunConfig, SeedingConfig
+from .async_configs import CrawlerRunConfig
 from .async_logger import AsyncLogger
 from .async_url_seeder import AsyncUrlSeeder
 from .models import Link, Links
@@ -177,101 +177,35 @@ class LinkPreview:
         return unique_urls
     
     async def _extract_heads_parallel(
-        self, 
-        urls: list[str], 
+        self,
+        urls: list[str],
         link_config: dict[str, Any]
     ) -> list[dict[str, Any]]:
-        """
-        Extract head content for URLs using URLSeeder's parallel processing.
-        
-        Args:
-            urls: List of URLs to process
-            link_config: Configuration dictionary for link extraction
-            
-        Returns:
-            List of dictionaries with url, status, head_data, and optional relevance_score
-        """
-        verbose = link_config.verbose
         concurrency = link_config.concurrency
-        
-        if verbose:
+
+        if link_config.verbose:
             self._log("info", "Starting batch processing: {total} links with {concurrency} concurrent workers",
                       params={"total": len(urls), "concurrency": concurrency})
-        
-        # Create SeedingConfig for URLSeeder
-        seeding_config = SeedingConfig(
-            extract_head=True,
-            concurrency=concurrency,
-            hits_per_sec=None,
-            score_threshold=link_config.score_threshold,
-            verbose=verbose
-        )
-        
-        # Use URLSeeder's extract_head_for_urls method with progress tracking
-        if verbose:
-            # Create a wrapper to track progress
-            results = await self._extract_with_progress(urls, seeding_config, link_config)
-        else:
-            results = await self.seeder.extract_head_for_urls(
-                urls=urls,
-                config=seeding_config,
-                concurrency=concurrency,
-                timeout=link_config.timeout
-            )
-        
-        return results
-    
-    async def _extract_with_progress(
-        self, 
-        urls: list[str], 
-        seeding_config: SeedingConfig, 
-        link_config: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        """Extract head content with progress reporting."""
-        
-        total_urls = len(urls)
-        concurrency = link_config.concurrency
-        
-        # Process URLs and track progress
-        completed = 0
-        successful = 0
-        failed = 0
-        
-        # Create a custom progress tracking version
-        # We'll modify URLSeeder's method to include progress callbacks
-        
-        # For now, let's use the existing method and report at the end
-        # In a production version, we would modify URLSeeder to accept progress callbacks
-        
-        self._log("info", "Processing links in batches...")
-        
-        # Use existing method
+
         results = await self.seeder.extract_head_for_urls(
             urls=urls,
-            config=seeding_config,
             concurrency=concurrency,
-            timeout=link_config.timeout
+            timeout=link_config.timeout,
+            score_threshold=link_config.score_threshold,
         )
-        
-        # Count results
-        for result in results:
-            completed += 1
-            if result.get("status") == "valid":
-                successful += 1
-            else:
-                failed += 1
-        
-        # Final progress report
-        self._log("info", "Batch processing completed: {completed}/{total} processed, {successful} successful, {failed} failed",
-                  params={
-                      "completed": completed,
-                      "total": total_urls,
-                      "successful": successful,
-                      "failed": failed
-                  })
-        
+
+        if link_config.verbose:
+            successful = len([r for r in results if r.get("status") == "valid"])
+            self._log("info", "Batch processing completed: {completed}/{total} processed, {successful} successful, {failed} failed",
+                      params={
+                          "completed": len(results),
+                          "total": len(urls),
+                          "successful": successful,
+                          "failed": len(results) - successful
+                      })
+
         return results
-    
+
     def _merge_head_data(
         self,
         original_links: Links,
