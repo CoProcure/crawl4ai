@@ -1,15 +1,10 @@
-import asyncio
-import copy
 import re
 from abc import ABC, abstractmethod
 from itertools import chain
 from typing import Any
-from urllib.parse import urljoin
 
-import requests
 from lxml import etree
 from lxml import html as lhtml
-from requests.exceptions import InvalidSchema
 
 from crawl4ai.cache_client import CacheClient, NoCacheClient
 
@@ -18,7 +13,6 @@ from .config import (
     IMAGE_SCORE_THRESHOLD,
     IMPORTANT_ATTRS,
     MIN_WORD_THRESHOLD,
-    ONLY_TEXT_ELIGIBLE_TAGS,
     SOCIAL_MEDIA_DOMAINS,
 )
 from .models import Link, Links, Media, MediaItem, ScrapingResult
@@ -30,12 +24,6 @@ from .utils import (
     is_external_url,
     normalize_url,
 )
-
-# Pre-compile regular expressions for Open Graph and Twitter metadata
-OG_REGEX = re.compile(r"^og:")
-TWITTER_REGEX = re.compile(r"^twitter:")
-DIMENSION_REGEX = re.compile(r"(\d+)(\D*)")
-
 
 # Function to parse srcset
 def parse_srcset(s: str) -> list[dict]:
@@ -58,40 +46,9 @@ def parse_srcset(s: str) -> list[dict]:
     return variants
 
 
-# Function to parse image height/width value and units
-def parse_dimension(dimension):
-    if dimension:
-        # match = re.match(r"(\d+)(\D*)", dimension)
-        match = DIMENSION_REGEX.match(dimension)
-        if match:
-            number = int(match.group(1))
-            unit = match.group(2) or "px"  # Default unit is 'px' if not specified
-            return number, unit
-    return None, None
-
-
-# Fetch image file metadata to extract size and extension
-def fetch_image_file_size(img, base_url):
-    # If src is relative path construct full URL, if not it may be CDN URL
-    img_url = urljoin(base_url, img.get("src"))
-    try:
-        response = requests.head(img_url)
-        if response.status_code == 200:
-            return response.headers.get("Content-Length", None)
-        return None
-    except InvalidSchema:
-        return None
-    finally:
-        return None
-
-
 class ContentScrapingStrategy(ABC):
     @abstractmethod
     def scrap(self, url: str, html: str, **kwargs) -> ScrapingResult:
-        pass
-
-    @abstractmethod
-    async def ascrap(self, url: str, html: str, **kwargs) -> ScrapingResult:
         pass
 
 
@@ -101,15 +58,11 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
 
     This is the primary scraping strategy in Crawl4AI, providing high-performance
     HTML parsing and content extraction using the lxml library.
-
-    Note: WebScrapingStrategy is now an alias for this class to maintain
-    backward compatibility.
     """
 
     def __init__(self, cache_client: CacheClient = NoCacheClient(), logger=None):
         self.cache_client = cache_client
         self.logger = logger
-        self.DIMENSION_REGEX = re.compile(r"(\d+)(\D*)")
         self.BASE64_PATTERN = re.compile(r'data:image/[^;]+;base64,([^"]+)')
 
     def _log(self, level, message, tag="SCRAPE", **kwargs):
@@ -158,7 +111,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
                 for aud in raw_result.get("media", {}).get("audios", [])
                 if aud
             ],
-            tables=raw_result.get("media", {}).get("tables", []),
         )
 
         # Convert links
@@ -182,52 +134,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
             links=links,
             metadata=raw_result.get("metadata", {}),
         )
-
-    async def ascrap(self, url: str, html: str, **kwargs) -> ScrapingResult:
-        """
-        Main entry point for asynchronous content scraping.
-
-        Args:
-            url (str): The URL of the page to scrape.
-            html (str): The HTML content of the page.
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            ScrapingResult: A structured result containing the scraped content.
-        """
-        return await asyncio.to_thread(self.scrap, url, html, **kwargs)
-
-    def process_element(
-        self, url, element: lhtml.HtmlElement, **kwargs
-    ) -> dict[str, Any]:
-        """
-        Process an HTML element.
-
-        How it works:
-        1. Check if the element is an image, video, or audio.
-        2. Extract the element's attributes and content.
-        3. Process the element based on its type.
-        4. Return the processed element information.
-
-        Args:
-            url (str): The URL of the page containing the element.
-            element (lhtml.HtmlElement): The HTML element to process.
-            **kwargs: Additional keyword arguments.
-
-        Returns:
-            dict: A dictionary containing the processed element information.
-        """
-        media = {"images": [], "videos": [], "audios": [], "tables": []}
-        internal_links_dict = {}
-        external_links_dict = {}
-        self._process_element(
-            url, element, media, internal_links_dict, external_links_dict, **kwargs
-        )
-        return {
-            "media": media,
-            "internal_links_dict": internal_links_dict,
-            "external_links_dict": external_links_dict,
-        }
 
     def _process_element(
         self,
@@ -367,13 +273,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
                 for elem in element.xpath(f".//{tag}"):
                     elem.getparent().remove(elem)
 
-        if excluded_selector := kwargs.get("excluded_selector", ""):
-            try:
-                for elem in element.cssselect(excluded_selector):
-                    elem.getparent().remove(elem)
-            except Exception:
-                pass  # Invalid selector
-
         return True
 
     def find_closest_parent_with_useful_text(
@@ -392,19 +291,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
                 return current.text_content().strip()
             current = current.getparent()
         return None
-
-    def flatten_nested_elements(self, element: lhtml.HtmlElement) -> lhtml.HtmlElement:
-        """Flatten nested elements of the same type in LXML tree"""
-        if len(element) == 1 and element.tag == element[0].tag:
-            return self.flatten_nested_elements(element[0])
-
-        for child in element:
-            child_idx = element.index(child)
-            flattened_child = self.flatten_nested_elements(child)
-            if flattened_child is not child:  # Only replace if actually flattened
-                element[child_idx] = flattened_child
-
-        return element
 
     def process_image(
         self, img: lhtml.HtmlElement, url: str, index: int, total_images: int, **kwargs
@@ -597,8 +483,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
         url: str,
         html: str,
         word_count_threshold: int = MIN_WORD_THRESHOLD,
-        css_selector: str = None,
-        target_elements: list[str] = None,
         **kwargs,
     ) -> dict[str, Any]:
         if not html:
@@ -655,12 +539,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
                     if img.getparent() is not None:
                         img.getparent().remove(img)
 
-            # Add comment removal
-            if kwargs.get("remove_comments", False):
-                comments = body.xpath("//comment()")
-                for comment in comments:
-                    comment.getparent().remove(comment)
-
             # Handle tag-based removal first
             excluded_tags = set(kwargs.get("excluded_tags", []) or [])
             if excluded_tags:
@@ -668,18 +546,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
                     for element in body.xpath(f".//{tag}"):
                         if element.getparent() is not None:
                             element.getparent().remove(element)
-
-            # Handle CSS selector-based exclusion
-            excluded_selector = kwargs.get("excluded_selector", "")
-            if excluded_selector:
-                try:
-                    for element in body.cssselect(excluded_selector):
-                        if element.getparent() is not None:
-                            element.getparent().remove(element)
-                except Exception as e:
-                    self._log(
-                        "error", f"Error with excluded CSS selector: {str(e)}", "SCRAPE"
-                    )
 
             # Extract metadata before any content filtering
             try:
@@ -689,26 +555,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
             except Exception as e:
                 self._log("error", f"Error extracting metadata: {str(e)}", "SCRAPE")
                 meta = {}
-
-            content_element = None
-            if target_elements:
-                try:
-                    for_content_targeted_element = []
-                    for target_element in target_elements:
-                        for_content_targeted_element.extend(
-                            body.cssselect(target_element)
-                        )
-                    content_element = lhtml.Element("div")
-                    content_element.extend(copy.deepcopy(for_content_targeted_element))
-                except Exception as e:
-                    self._log(
-                        "error",
-                        f"Error with target element detection: {str(e)}",
-                        "SCRAPE",
-                    )
-                    return None
-            else:
-                content_element = body
 
             # Remove script and style tags
             for tag in ["script", "style", "link", "meta", "noscript"]:
@@ -732,7 +578,7 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
                         form.getparent().remove(form)
 
             # Process content
-            media = {"images": [], "videos": [], "audios": [], "tables": []}
+            media = {"images": [], "videos": [], "audios": []}
             internal_links_dict = {}
             external_links_dict = {}
 
@@ -746,27 +592,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
                 base_domain=base_domain,
                 **kwargs,
             )
-
-            # Extract tables using the table extraction strategy if provided
-            if "table" not in excluded_tags:
-                table_extraction = kwargs.get("table_extraction")
-                if table_extraction:
-                    # Pass logger to the strategy if it doesn't have one
-                    if not table_extraction.logger:
-                        table_extraction.logger = self.logger
-                    # Extract tables using the strategy
-                    extracted_tables = table_extraction.extract_tables(body, **kwargs)
-                    media["tables"].extend(extracted_tables)
-
-            # Handle only_text option
-            if kwargs.get("only_text", False):
-                for tag in ONLY_TEXT_ELIGIBLE_TAGS:
-                    for element in body.xpath(f".//{tag}"):
-                        if element.text:
-                            new_text = lhtml.Element("span")
-                            new_text.text = element.text_content()
-                            if element.getparent() is not None:
-                                element.getparent().replace(element, new_text)
 
             # Clean base64 images
             for img in body.xpath(".//img[@src]"):
@@ -784,8 +609,7 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
 
             # Generate output HTML
             cleaned_html = lhtml.tostring(
-                # body,
-                content_element,
+                body,
                 encoding="unicode",
                 pretty_print=True,
                 method="html",
@@ -829,25 +653,19 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
                     ]
                     links_obj = Links(internal=internal_links, external=external_links)
 
-                    # Create a config object for LinkPreview
-                    class TempCrawlerRunConfig:
-                        def __init__(self, link_config, score_links):
-                            self.link_preview_config = link_config
-                            self.score_links = score_links
-
-                    config = TempCrawlerRunConfig(
-                        link_preview_config, kwargs.get("score_links", False)
-                    )
-
                     # Extract head content (run async operation in sync context)
                     async def extract_links():
                         async with LinkPreview(self.cache_client, self.logger) as extractor:
-                            return await extractor.extract_link_heads(links_obj, config)
+                            return await extractor.extract_link_heads(
+                                links_obj,
+                                link_preview_config,
+                                kwargs.get("score_links", False),
+                            )
 
                     # Run the async operation
                     try:
                         # Check if we're already in an async context
-                        loop = asyncio.get_running_loop()
+                        asyncio.get_running_loop()
                         # If we're in an async context, we need to run in a thread
                         import concurrent.futures
 
@@ -927,8 +745,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
             2. The page might not be fully loaded.
             
             Suggestions:
-            - Try calling the crawl function with these parameters:
-            magic=True,
             - Set headless=False to visualize what's happening on the page.
             
             If the issue persists, please check the page's structure and any potential anti-crawling measures.
@@ -939,11 +755,8 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
             return {
                 "cleaned_html": cleaned_html,
                 "success": False,
-                "media": {"images": [], "videos": [], "audios": [], "tables": []},
+                "media": {"images": [], "videos": [], "audios": []},
                 "links": {"internal": [], "external": []},
                 "metadata": {},
             }
 
-
-# Backward compatibility alias
-WebScrapingStrategy = LXMLWebScrapingStrategy

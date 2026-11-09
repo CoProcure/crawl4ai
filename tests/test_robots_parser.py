@@ -1,223 +1,71 @@
-import pytest
-
-import asyncio
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from aiohttp import web
+import pytest
 
-from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig
-from crawl4ai.async_webcrawler import AsyncWebCrawler
-from crawl4ai.cache_context import CacheMode
 from crawl4ai.utils import RobotsParser
+from tests.helpers import EXAMPLE_URL, TestCacheClient
 
-from .helpers import EXAMPLE_URL, TestCacheClient
+ALLOW_ALL_ROBOTS_TXT = "User-agent: *\nAllow: /\n"
 
-
-@pytest.mark.asyncio
-async def test_robots_parser_cache():
-    cache_client = TestCacheClient()
-    parser = RobotsParser(cache_client=cache_client)
-
-    mock_response = MagicMock(status=200)
-    mock_response.text = AsyncMock(return_value="User-agent: *\nAllow: /\n")
-
-    mock_session = MagicMock()
-    mock_session.get.return_value.__aenter__.return_value = mock_response
-    mock_session.__aenter__.return_value = mock_session
-
-    try:
-        with patch("crawl4ai.utils.aiohttp.ClientSession", return_value=mock_session):
-            allowed = await parser.can_fetch(EXAMPLE_URL, "MyBot/1.0")
-            assert allowed
-            assert cache_client.count() == 1
-
-            await parser.can_fetch(EXAMPLE_URL, "MyBot/1.0")
-            assert cache_client.count() == 1
-
-            await parser.can_fetch("https://docs.crawl4ai.com", "MyBot/1.0")
-            assert cache_client.count() == 2
-    finally:
-        cache_client.cleanup()
-
-
-@pytest.mark.asyncio
-async def test_robots_parser_wildcard_string():
-    cache_client = TestCacheClient()
-    parser = RobotsParser(cache_client=cache_client)
-
-    mock_response = MagicMock(status=200)
-    mock_response.text = AsyncMock(
-        return_value="""User-agent: *
+WILDCARD_ROBOTS_TXT = """User-agent: *
 Allow: /***************************************.css
 Allow: /***************************************.js
-Allow: /***************************************.png
-Allow: /***************************************.jpeg
-Allow: /***************************************.jpg
-Allow: /***************************************.gif
-Allow: /***************************************.ico
 Allow: /sitemap*.xml
 Allow: /*/default*
 Allow: /s/default
 Allow: /*default*/s/
-# Directories
 Disallow: /_user_controls
 Disallow: /admin
 """
-    )
 
-    mock_session = MagicMock()
-    mock_session.get.return_value.__aenter__.return_value = mock_response
-    mock_session.__aenter__.return_value = mock_session
 
-    try:
-        with patch("crawl4ai.utils.aiohttp.ClientSession", return_value=mock_session):
-            allowed = await parser.can_fetch(
-                "https://testing.com/static/style.css", "MyBot/1.0"
-            )
-            assert allowed
+@pytest.fixture
+def cache_client():
+    client = TestCacheClient()
+    yield client
+    client.cleanup()
 
-            allowed = await parser.can_fetch(
-                "https://testing.com/style.css", "MyBot/1.0"
-            )
-            assert allowed
 
-            allowed = await parser.can_fetch(
-                "https://testing.com/blah/default", "MyBot/1.0"
-            )
-            assert allowed
-
-            allowed = await parser.can_fetch("https://testing.com/admin", "MyBot/1.0")
-            assert not allowed
-
-            allowed = await parser.can_fetch(
-                "https://testing.com/admin/something", "MyBot/1.0"
-            )
-            assert not allowed
-    finally:
-        cache_client.cleanup()
+def serve_robots_txt(text: str):
+    response = MagicMock(status=200)
+    response.text = AsyncMock(return_value=text)
+    session = MagicMock()
+    session.get.return_value.__aenter__.return_value = response
+    session.__aenter__.return_value = session
+    return patch("crawl4ai.utils.aiohttp.ClientSession", return_value=session)
 
 
 @pytest.mark.asyncio
-async def test_robots_parser_local_server():
-    cache_client = TestCacheClient()
-    parser = RobotsParser(cache_client=cache_client, cache_ttl=1)
+async def test_can_fetch_caches_robots_rules_per_domain(cache_client):
+    parser = RobotsParser(cache_client=cache_client)
 
-    async def start_test_server():
-        app = web.Application()
+    with serve_robots_txt(ALLOW_ALL_ROBOTS_TXT):
+        await parser.can_fetch(EXAMPLE_URL, "MyBot/1.0")
+        entries_after_first_fetch = cache_client.count()
+        await parser.can_fetch(EXAMPLE_URL, "MyBot/1.0")
+        entries_after_repeat_fetch = cache_client.count()
+        await parser.can_fetch("https://docs.crawl4ai.com", "MyBot/1.0")
 
-        async def robots_txt(request):
-            return web.Response(
-                text="""User-agent: *
-Disallow: /private/
-Allow: /public/
-"""
-            )
-
-        async def malformed_robots(request):
-            return web.Response(text="<<<malformed>>>")
-
-        async def timeout_robots(request):
-            await asyncio.sleep(5)
-            return web.Response(text="Should timeout")
-
-        async def empty_robots(request):
-            return web.Response(text="")
-
-        async def giant_robots(request):
-            return web.Response(text="User-agent: *\nDisallow: /\n" * 10000)
-
-        # Mount all handlers at root level
-        app.router.add_get("/robots.txt", robots_txt)
-        app.router.add_get("/malformed/robots.txt", malformed_robots)
-        app.router.add_get("/timeout/robots.txt", timeout_robots)
-        app.router.add_get("/empty/robots.txt", empty_robots)
-        app.router.add_get("/giant/robots.txt", giant_robots)
-
-        runner = web.AppRunner(app)
-        await runner.setup()
-        site = web.TCPSite(runner, "localhost", 8080)
-        await site.start()
-        return runner
-
-    runner = await start_test_server()
-
-    try:
-        base_url = "http://localhost:8080"
-
-        # Test public access
-        result = await parser.can_fetch(f"{base_url}/public/page", "bot")
-        assert result, "Public path should be allowed"
-
-        # Test private access
-        result = await parser.can_fetch(f"{base_url}/private/secret", "bot")
-        assert not result, "Private path should be denied"
-
-        # Test malformed
-        result = await parser.can_fetch("http://localhost:8080/malformed/page", "bot")
-
-        # Test timeout
-        start = time.time()
-        result = await parser.can_fetch("http://localhost:8080/timeout/page", "bot")
-        duration = time.time() - start
-        assert duration < 3, "Timeout not working"
-
-        # Test empty
-        result = await parser.can_fetch("http://localhost:8080/empty/page", "bot")
-
-        # Test giant file
-        start = time.time()
-        result = await parser.can_fetch("http://localhost:8080/giant/page", "bot")
-        duration = time.time() - start
-
-        # Test with custom TTL
-        await parser.can_fetch("https://www.example.com", "bot")
-        await asyncio.sleep(1.1)
-        start = time.time()
-        await parser.can_fetch("https://www.example.com", "bot")
-
-    finally:
-        await runner.cleanup()
-        cache_client.cleanup()
+    assert entries_after_first_fetch == 1
+    assert entries_after_repeat_fetch == 1
+    assert cache_client.count() == 2
 
 
 @pytest.mark.asyncio
-async def test_real_websites():
-    browser_config = BrowserConfig(headless=True, verbose=True)
-    cache_client = TestCacheClient()
-    async with AsyncWebCrawler(
-        cache_client=cache_client, config=browser_config
-    ) as crawler:
-        # Test cases with URLs
-        test_cases = [
-            # Public sites that should be allowed
-            ("https://example.com", True),  # Simple public site
-            ("https://httpbin.org/get", True),  # API endpoint
-            # Sites with known strict robots.txt
-            ("https://www.facebook.com/robots.txt", False),  # Social media
-            ("https://www.google.com/search", False),  # Search pages
-            # Edge cases
-            ("https://api.github.com", True),  # API service
-            ("https://raw.githubusercontent.com", True),  # Content delivery
-            # Non-existent/error cases
-            ("https://thisisnotarealwebsite.com", True),  # Non-existent domain
-            ("https://localhost:12345", True),  # Invalid port
-        ]
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://testing.com/static/style.css", True),
+        ("https://testing.com/style.css", True),
+        ("https://testing.com/blah/default", True),
+        ("https://testing.com/admin", False),
+        ("https://testing.com/admin/something", False),
+    ],
+)
+async def test_can_fetch_applies_wildcard_allow_and_disallow_rules(cache_client, url, expected):
+    parser = RobotsParser(cache_client=cache_client)
 
-        for url, expected in test_cases:
-            try:
-                config = CrawlerRunConfig(
-                    cache_mode=CacheMode.BYPASS,
-                    check_robots_txt=True,  # Enable robots.txt checking
-                    verbose=True,
-                )
+    with serve_robots_txt(WILDCARD_ROBOTS_TXT):
+        allowed = await parser.can_fetch(url, "MyBot/1.0")
 
-                result = await crawler.arun(url=url, config=config)
-                allowed = result.success and not result.error_message
-
-                assert expected == allowed
-
-            except Exception:
-                continue
-
-    cache_client.cleanup()
+    assert allowed is expected

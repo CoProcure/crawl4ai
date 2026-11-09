@@ -10,7 +10,7 @@ from typing import Any
 
 from crawl4ai.cache_client import CacheClient, NoCacheClient
 
-from .async_configs import CrawlerRunConfig, SeedingConfig
+from .async_configs import LinkPreviewConfig
 from .async_logger import AsyncLogger
 from .async_url_seeder import AsyncUrlSeeder
 from .models import Link, Links
@@ -25,7 +25,6 @@ class LinkPreview:
     - Pattern-based inclusion/exclusion filtering
     - Parallel processing with configurable concurrency
     - Caching for performance
-    - BM25 relevance scoring
     - Memory-safe processing for large link sets
     """
     
@@ -39,7 +38,6 @@ class LinkPreview:
         self.cache_client = cache_client
         self.logger = logger
         self.seeder: AsyncUrlSeeder | None = None
-        self._owns_seeder = False
     
     async def __aenter__(self):
         """Async context manager entry."""
@@ -55,14 +53,12 @@ class LinkPreview:
         if not self.seeder:
             self.seeder = AsyncUrlSeeder(cache_client=self.cache_client, logger=self.logger)
             await self.seeder.__aenter__()
-            self._owns_seeder = True
     
     async def close(self):
         """Clean up resources."""
-        if self.seeder and self._owns_seeder:
+        if self.seeder:
             await self.seeder.__aexit__(None, None, None)
             self.seeder = None
-            self._owns_seeder = False
     
     def _log(self, level: str, message: str, tag: str = "LINK_EXTRACT", **kwargs):
         """Helper method to safely log messages."""
@@ -73,21 +69,19 @@ class LinkPreview:
     
     async def extract_link_heads(
         self, 
-        links: Links, 
-        config: CrawlerRunConfig
+        links: Links,
+        link_config: LinkPreviewConfig,
+        score_links: bool,
     ) -> Links:
         """
         Extract head content for filtered links and attach to Link objects.
         
         Args:
             links: Links object containing internal and external links
-            config: CrawlerRunConfig with link_preview_config settings
             
         Returns:
             Links object with head_data attached to filtered Link objects
         """
-        link_config = config.link_preview_config
-        
         # Ensure seeder is initialized
         await self.start()
         
@@ -105,14 +99,14 @@ class LinkPreview:
         head_results = await self._extract_heads_parallel(filtered_urls, link_config)
         
         # Merge results back into Link objects
-        updated_links = self._merge_head_data(links, head_results, config)
+        updated_links = self._merge_head_data(links, head_results, score_links)
         
         self._log("info", "Completed head extraction for links, {success} successful",
                   params={"success": len([r for r in head_results if r.get("status") == "valid"])})
         
         return updated_links
     
-    def _filter_links(self, links: Links, link_config: dict[str, Any]) -> list[str]:
+    def _filter_links(self, links: Links, link_config: LinkPreviewConfig) -> list[str]:
         """
         Filter links based on configuration parameters.
         
@@ -178,221 +172,66 @@ class LinkPreview:
         return unique_urls
     
     async def _extract_heads_parallel(
-        self, 
-        urls: list[str], 
-        link_config: dict[str, Any]
+        self,
+        urls: list[str],
+        link_config: LinkPreviewConfig
     ) -> list[dict[str, Any]]:
-        """
-        Extract head content for URLs using URLSeeder's parallel processing.
-        
-        Args:
-            urls: List of URLs to process
-            link_config: Configuration dictionary for link extraction
-            
-        Returns:
-            List of dictionaries with url, status, head_data, and optional relevance_score
-        """
-        verbose = link_config.verbose
         concurrency = link_config.concurrency
-        
-        if verbose:
+
+        if link_config.verbose:
             self._log("info", "Starting batch processing: {total} links with {concurrency} concurrent workers",
                       params={"total": len(urls), "concurrency": concurrency})
-        
-        # Create SeedingConfig for URLSeeder
-        seeding_config = SeedingConfig(
-            extract_head=True,
-            concurrency=concurrency,
-            hits_per_sec=getattr(link_config, 'hits_per_sec', None),
-            query=link_config.query,
-            score_threshold=link_config.score_threshold,
-            scoring_method="bm25" if link_config.query else None,
-            verbose=verbose
-        )
-        
-        # Use URLSeeder's extract_head_for_urls method with progress tracking
-        if verbose:
-            # Create a wrapper to track progress
-            results = await self._extract_with_progress(urls, seeding_config, link_config)
-        else:
-            results = await self.seeder.extract_head_for_urls(
-                urls=urls,
-                config=seeding_config,
-                concurrency=concurrency,
-                timeout=link_config.timeout
-            )
-        
-        return results
-    
-    async def _extract_with_progress(
-        self, 
-        urls: list[str], 
-        seeding_config: SeedingConfig, 
-        link_config: dict[str, Any]
-    ) -> list[dict[str, Any]]:
-        """Extract head content with progress reporting."""
-        
-        total_urls = len(urls)
-        concurrency = link_config.concurrency
-        batch_size = max(1, total_urls // 10)  # Report progress every 10%
-        
-        # Process URLs and track progress
-        completed = 0
-        successful = 0
-        failed = 0
-        
-        # Create a custom progress tracking version
-        # We'll modify URLSeeder's method to include progress callbacks
-        
-        # For now, let's use the existing method and report at the end
-        # In a production version, we would modify URLSeeder to accept progress callbacks
-        
-        self._log("info", "Processing links in batches...")
-        
-        # Use existing method
+
         results = await self.seeder.extract_head_for_urls(
             urls=urls,
-            config=seeding_config,
             concurrency=concurrency,
-            timeout=link_config.timeout
+            timeout=link_config.timeout,
+            score_threshold=link_config.score_threshold,
         )
-        
-        # Count results
-        for result in results:
-            completed += 1
-            if result.get("status") == "valid":
-                successful += 1
-            else:
-                failed += 1
-        
-        # Final progress report
-        self._log("info", "Batch processing completed: {completed}/{total} processed, {successful} successful, {failed} failed",
-                  params={
-                      "completed": completed,
-                      "total": total_urls,
-                      "successful": successful,
-                      "failed": failed
-                  })
-        
+
+        if link_config.verbose:
+            successful = len([r for r in results if r.get("status") == "valid"])
+            self._log("info", "Batch processing completed: {completed}/{total} processed, {successful} successful, {failed} failed",
+                      params={
+                          "completed": len(results),
+                          "total": len(urls),
+                          "successful": successful,
+                          "failed": len(results) - successful
+                      })
+
         return results
-    
+
     def _merge_head_data(
-        self, 
-        original_links: Links, 
+        self,
+        original_links: Links,
         head_results: list[dict[str, Any]],
-        config: CrawlerRunConfig
+        score_links: bool,
     ) -> Links:
-        """
-        Merge head extraction results back into Link objects.
-        
-        Args:
-            original_links: Original Links object
-            head_results: Results from head extraction
-            
-        Returns:
-            Links object with head_data attached to matching links
-        """
-        # Create URL to head_data mapping
-        url_to_head_data = {}
-        for result in head_results:
-            url = result.get("url")
-            if url:
-                url_to_head_data[url] = {
-                    "head_data": result.get("head_data", {}),
-                    "status": result.get("status", "unknown"),
-                    "error": result.get("error"),
-                    "relevance_score": result.get("relevance_score")
-                }
-        
-        # Update internal links
-        updated_internal = []
-        for link in original_links.internal:
-            if link.href in url_to_head_data:
-                head_info = url_to_head_data[link.href]
-                # Create new Link object with head data and scoring
-                contextual_score = head_info.get("relevance_score")
-                
-                updated_link = Link(
-                    href=link.href,
-                    text=link.text,
-                    title=link.title,
-                    base_domain=link.base_domain,
-                    head_data=head_info["head_data"],
-                    head_extraction_status=head_info["status"],
-                    head_extraction_error=head_info.get("error"),
-                    intrinsic_score=getattr(link, 'intrinsic_score', None),
-                    contextual_score=contextual_score
-                )
-                
-                # Add relevance score to head_data for backward compatibility
-                if contextual_score is not None:
-                    updated_link.head_data = updated_link.head_data or {}
-                    updated_link.head_data["relevance_score"] = contextual_score
-                
-                # Calculate total score combining intrinsic and contextual scores
-                updated_link.total_score = calculate_total_score(
-                    intrinsic_score=updated_link.intrinsic_score,
-                    contextual_score=updated_link.contextual_score,
-                    score_links_enabled=getattr(config, 'score_links', False),
-                    query_provided=bool(config.link_preview_config.query)
-                )
-                
-                updated_internal.append(updated_link)
-            else:
-                # Keep original link unchanged
-                updated_internal.append(link)
-        
-        # Update external links
-        updated_external = []
-        for link in original_links.external:
-            if link.href in url_to_head_data:
-                head_info = url_to_head_data[link.href]
-                # Create new Link object with head data and scoring
-                contextual_score = head_info.get("relevance_score")
-                
-                updated_link = Link(
-                    href=link.href,
-                    text=link.text,
-                    title=link.title,
-                    base_domain=link.base_domain,
-                    head_data=head_info["head_data"],
-                    head_extraction_status=head_info["status"],
-                    head_extraction_error=head_info.get("error"),
-                    intrinsic_score=getattr(link, 'intrinsic_score', None),
-                    contextual_score=contextual_score
-                )
-                
-                # Add relevance score to head_data for backward compatibility
-                if contextual_score is not None:
-                    updated_link.head_data = updated_link.head_data or {}
-                    updated_link.head_data["relevance_score"] = contextual_score
-                
-                # Calculate total score combining intrinsic and contextual scores
-                updated_link.total_score = calculate_total_score(
-                    intrinsic_score=updated_link.intrinsic_score,
-                    contextual_score=updated_link.contextual_score,
-                    score_links_enabled=getattr(config, 'score_links', False),
-                    query_provided=bool(config.link_preview_config.query)
-                )
-                
-                updated_external.append(updated_link)
-            else:
-                # Keep original link unchanged
-                updated_external.append(link)
-        
-        # Sort links by relevance score if available
-        if any(hasattr(link, 'head_data') and link.head_data and 'relevance_score' in link.head_data 
-               for link in updated_internal + updated_external):
-            
-            def get_relevance_score(link):
-                if hasattr(link, 'head_data') and link.head_data and 'relevance_score' in link.head_data:
-                    return link.head_data['relevance_score']
-                return 0.0
-            
-            updated_internal.sort(key=get_relevance_score, reverse=True)
-            updated_external.sort(key=get_relevance_score, reverse=True)
-        
+        url_to_head_info = {
+            result["url"]: result for result in head_results if result.get("url")
+        }
+
+        def merge(link: Link) -> Link:
+            head_info = url_to_head_info.get(link.href)
+            if head_info is None:
+                return link
+
+            return Link(
+                href=link.href,
+                text=link.text,
+                title=link.title,
+                base_domain=link.base_domain,
+                head_data=head_info.get("head_data", {}),
+                head_extraction_status=head_info.get("status", "unknown"),
+                head_extraction_error=head_info.get("error"),
+                intrinsic_score=link.intrinsic_score,
+                total_score=calculate_total_score(
+                    intrinsic_score=link.intrinsic_score,
+                    score_links_enabled=score_links,
+                ),
+            )
+
         return Links(
-            internal=updated_internal,
-            external=updated_external
+            internal=[merge(link) for link in original_links.internal],
+            external=[merge(link) for link in original_links.external],
         )
