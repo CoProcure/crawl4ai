@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Optional, Dict, Any, Tuple
 from .models import MarkdownGenerationResult
-from .html2text import CustomHTML2Text
+from ._html_to_markdown import CustomHTML2Text
 import re
 from urllib.parse import urljoin
 
