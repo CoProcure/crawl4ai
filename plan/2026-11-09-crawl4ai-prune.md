@@ -5,7 +5,7 @@ tags: [crawl4ai, dependencies]
 created: 2026-11-09
 updated: 2026-11-09
 last_pr: 113
-next_step: Refactor pass on PR 113, then watch CI and mark ready for review
+next_step: Mark PR 113 ready for review, merge it, then bump the crawl4ai rev in gazebo and fix the two gazebo findings
 ---
 # Implementation Plan: Prune crawl4ai fork to gazebo's usage
 
@@ -88,3 +88,6 @@ and `uv run pytest tests/` green.
 **2026-11-09**: `.claude/settings.local.json` (the upstream author's tracked local settings) stays out of scope; the user can remove it.
 **2026-11-09**: Implementation landed as draft #113: 23 modules and 6,283 lines (from 59 and 35,232), 9 runtime dependencies (from 33 entries). Commits 2 and 3 merged in practice, because the strategy, browser manager, and dispatcher read the run options removed in commit 2. `SeedingConfig` and `LinkPreviewConfig.query` (with BM25) were removed too. Gazebo's two crawl4ai test files pass against the branch.
 **2026-11-09**: Finding for gazebo: `LinkPreviewConfig(score_threshold=0.2)` without a `query` drops every link's `head_data`, because no link gets a relevance score to compare. This already happens on `main`; the prune keeps it. Gazebo should decide whether it wants `score_threshold`.
+**2026-11-09**: Refactor pass (14ae934) removed leftover fields, methods, and `CrawlResult` fields for removed features, and made every test local (32 tests). CI is green on 14ae934.
+**2026-11-09**: Finding for gazebo: `AsyncPlaywrightCrawlerStrategy.set_custom_headers` only stores `self.headers`, and nothing reads it, so gazebo's `Accept-Language` header has never been sent. This is already true on `main`; the PR keeps the method because gazebo calls it.
+**2026-11-09**: Possible later prune: the proxy, viewport, cookie, locale, and timezone options on `BrowserConfig` and `CrawlerRunConfig` are still read by `browser_manager.py`, but gazebo never sets them.
