@@ -1,15 +1,14 @@
 ---
 title: Crawl4ai prune
-status: active
+status: completed
 tags: [crawl4ai, dependencies]
 created: 2026-11-09
 updated: 2026-11-09
 last_pr: 113
-next_step: Mark PR 113 ready for review, merge it, then bump the crawl4ai rev in gazebo and fix the two gazebo findings
 ---
 # Implementation Plan: Prune crawl4ai fork to gazebo's usage
 
-**Status**: In Progress
+**Status**: Complete
 **Created**: 2026-11-09
 **Research**: `.apl/research/2026-11-09-crawl4ai-prune.md` (module, dependency, and test verdicts; traced runtime paths; risks)
 
@@ -37,7 +36,7 @@ and `uv run pytest tests/` green.
 ### PR 1: Prune crawl4ai to gazebo's usage
 - **Ticket:** sc-36999
 - **Branch:** `sc-36999-prune-to-gazebo-usage` (from `main`)
-- **Status:** Draft PR — [#113](https://github.com/CoProcure/crawl4ai/pull/113)
+- **Status:** Complete — [#113](https://github.com/CoProcure/crawl4ai/pull/113)
 - **Commit 1: dead code and upstream project files**
   - Delete `async_crawler_strategy.back.py`, `async_database.py`, `migrations.py`, `install.py`, `model_loader.py`, `cli.py`, `browser_profiler.py`, `adaptive_crawler.py`, `processors/`, `html2text/cli.py`, `html2text/__main__.py`.
   - Delete `unvalidated_tests/`, `docs/`, `mkdocs.yml`, `prompts/`, `README-first.md`, `CHANGELOG.md`, `cliff.toml`, `ROADMAP.md`, `JOURNAL.md`, `MISSION.md`, `PROGRESSIVE_CRAWLING.md`, `CONTRIBUTORS.md`, `SPONSORS.md`, `CODE_OF_CONDUCT.md`, `.env.txt`, `.github` issue and discussion templates, `setup.py`, `setup.cfg`.
@@ -78,7 +77,7 @@ and `uv run pytest tests/` green.
 
 - [x] sc-36999: Implementation complete
 - [x] sc-36999: PR created (#113)
-- [ ] sc-36999: Merged
+- [x] sc-36999: Merged (fe210e1)
 
 ## Review Patterns
 
@@ -92,3 +91,4 @@ and `uv run pytest tests/` green.
 **2026-11-09**: Finding for gazebo: `AsyncPlaywrightCrawlerStrategy.set_custom_headers` only stores `self.headers`, and nothing reads it, so gazebo's `Accept-Language` header has never been sent. This is already true on `main`; the PR keeps the method because gazebo calls it.
 **2026-11-09**: Possible later prune: the proxy, viewport, cookie, locale, and timezone options on `BrowserConfig` and `CrawlerRunConfig` are still read by `browser_manager.py`, but gazebo never sets them.
 **2026-11-09**: At the user's request, html2text is unvendored (55e1efa). `CustomHTML2Text` now lives in `crawl4ai/_html_to_markdown.py` on top of PyPI `html2text`, which is pinned to 2024.2.26 because 2025.4.15 adds one space of indentation to nested ordered lists. An equivalence harness (57 HTML files, 114 cases) showed 0 diffs. 10 runtime dependencies. CI is green on 55e1efa.
+**2026-11-09**: Merged as fe210e1. Final size is 19 modules and 4,608 lines. Handoff: `.apl/handoff/2026-11-09-crawl4ai-prune.md`.
