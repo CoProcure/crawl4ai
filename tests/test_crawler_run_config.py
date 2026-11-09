@@ -1,123 +1,93 @@
-import http.server
-import threading
-
 import pytest
 
-from crawl4ai import AsyncWebCrawler, CrawlerRunConfig, LinkPreviewConfig
-from crawl4ai.async_configs import MatchMode
-from tests.helpers import EXAMPLE_RAW_HTML, EXAMPLE_URL
+from crawl4ai import (
+    AsyncWebCrawler,
+    CacheMode,
+    CrawlerRunConfig,
+    DefaultMarkdownGenerator,
+    LinkPreviewConfig,
+)
 
 
-class ExampleHtmlHandler(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        body = EXAMPLE_RAW_HTML.encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-    def log_message(self, format, *args):
-        pass
-
-
-@pytest.fixture
-def example_html_url():
-    # css_selector is only applied when the browser loads the page, which raw: and
-    # file:// URLs skip, so serve fixed markup over HTTP instead of a live site.
-    server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), ExampleHtmlHandler)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    yield f"http://127.0.0.1:{server.server_port}/"
-    server.shutdown()
-    server.server_close()
-
-
-def test_is_match_single_pattern():
+def test_clone_preserves_options_and_replaces_overrides():
     config = CrawlerRunConfig(
-        url_matcher="*.pdf"
+        check_robots_txt=True,
+        cache_mode=CacheMode.ENABLED,
+        word_count_threshold=5,
+        remove_forms=True,
+        exclude_social_media_links=True,
+        exclude_all_images=True,
+        exclude_external_links=True,
+        excluded_tags=["nav"],
+        score_links=True,
+        link_preview_config=LinkPreviewConfig(concurrency=3),
+        markdown_generator=DefaultMarkdownGenerator(),
     )
-    test_urls = [
-        (f"{EXAMPLE_URL}/file.pdf", True),
-        (f"{EXAMPLE_URL}/doc.PDF", False),  # Case sensitive
-        (f"{EXAMPLE_URL}/file.txt", False),
-        ("file.pdf", True),
-    ]
 
-    for url, expected in test_urls:    
-        assert config.is_match(url) == expected
-    
-def test_is_match_with_or_mode():
+    cloned = config.clone(user_agent="Fallback/1.0", cache_mode=CacheMode.WRITE_ONLY)
+
+    assert cloned.user_agent == "Fallback/1.0"
+    assert cloned.cache_mode == CacheMode.WRITE_ONLY
+    assert cloned.check_robots_txt is True
+    assert cloned.word_count_threshold == 5
+    assert cloned.remove_forms is True
+    assert cloned.exclude_social_media_links is True
+    assert cloned.exclude_all_images is True
+    assert cloned.exclude_external_links is True
+    assert cloned.excluded_tags == ["nav"]
+    assert cloned.score_links is True
+    assert cloned.link_preview_config.concurrency == 3
+    assert cloned.markdown_generator is config.markdown_generator
+
+
+def test_clone_leaves_the_original_config_unchanged():
+    config = CrawlerRunConfig(cache_mode=CacheMode.ENABLED)
+
+    config.clone(user_agent="Fallback/1.0", cache_mode=CacheMode.WRITE_ONLY)
+
+    assert config.user_agent is None
+    assert config.cache_mode == CacheMode.ENABLED
+
+
+def test_from_kwargs_defaults_word_count_threshold_to_200_when_unset():
+    assert CrawlerRunConfig.from_kwargs({}).word_count_threshold == 200
+    assert CrawlerRunConfig.from_kwargs({"word_count_threshold": 5}).word_count_threshold == 5
+
+
+def test_removed_run_options_are_rejected():
+    with pytest.raises(TypeError):
+        CrawlerRunConfig(css_selector="h1")
+
+
+@pytest.mark.asyncio
+async def test_link_preview_attaches_head_data_and_score_to_links(local_site):
     config = CrawlerRunConfig(
-        url_matcher=["*/article/*", "*/blog/*", "*.html"],
-        match_mode=MatchMode.OR
+        link_preview_config=LinkPreviewConfig(include_external=True),
+        score_links=True,
     )
-    test_urls = [
-        (f"{EXAMPLE_URL}/article/news", True),
-        (f"{EXAMPLE_URL}/blog/post", True),
-        (f"{EXAMPLE_URL}/page.html", True),
-        (f"{EXAMPLE_URL}/page.php", False),
-    ]
-    for url, expected in test_urls:
-        assert config.is_match(url) == expected
-    
-def test_is_match_custom_function():
-    config = CrawlerRunConfig(
-        url_matcher=lambda url: 'api' in url and (url.endswith('.json') or url.endswith('.xml'))
-    )
-    test_urls = [
-        (f"{EXAMPLE_URL}/api/data.json", True),
-        (f"{EXAMPLE_URL}/api/data.xml", True),
-        (f"{EXAMPLE_URL}/data.html", False),
-        (f"{EXAMPLE_URL}/data.json", False),  # No 'api'
-    ]
-    for url, expected in test_urls:
-        assert config.is_match(url) == expected
-    
-def test_is_match_mixed_with_and_mode():
-    config = CrawlerRunConfig(
-        url_matcher=[
-            "https://*",  # Must be HTTPS
-            lambda url: '.com' in url,  # Must have .com
-            lambda url: len(url) < 50  # Must be short
-        ],
-        match_mode=MatchMode.AND
-    )
-    test_urls = [
-        (f"{EXAMPLE_URL}/page", True),
-        ("http://example.com/page", False),  # Not HTTPS
-        ("example.org/page", False),  # No .com
-        (f"{EXAMPLE_URL}/" + "x" * 50, False),  # Too long
-    ]
-    for url, expected in test_urls:
-        assert config.is_match(url) == expected
-    
-def test_is_match_mixed_with_or_mode():
-    config = CrawlerRunConfig(
-        url_matcher=[
-            "*/api/v[0-9]/*",  # API versioned endpoints
-            lambda url: 'graphql' in url,  # GraphQL endpoints
-            "*.json"  # JSON files
-        ],
-        match_mode=MatchMode.OR
-    )
-    test_urls = [
-        (f"{EXAMPLE_URL}/api/v1/users", True),
-        (f"{EXAMPLE_URL}/api/v2/posts", True),
-        (f"{EXAMPLE_URL}/graphql", True),
-        (f"{EXAMPLE_URL}/data.json", True),
-        (f"{EXAMPLE_URL}/api/users", False),  # No version
-    ]
-    for url, expected in test_urls:
-        assert config.is_match(url) == expected
-    
-def test_is_match_no_matcher():
-    config = CrawlerRunConfig()
-    assert config.is_match(EXAMPLE_URL)
-    
-def test_is_match_empty_list():
-    config = CrawlerRunConfig(url_matcher=[])
-    assert not config.is_match(EXAMPLE_URL)
-    
+
+    async with AsyncWebCrawler() as crawler:
+        result = await crawler.arun(local_site.url("/"), config=config)
+
+    all_links = result.links["internal"] + result.links["external"]
+    links = {link["href"]: link for link in all_links}
+    about = links[local_site.url("/about")]
+    assert about["head_extraction_status"] == "valid"
+    assert about["head_data"]["title"] == "About"
+    assert about["total_score"] > 0
+    assert local_site.url("/contact") in links
+
+
+@pytest.mark.asyncio
+async def test_links_have_no_head_data_without_link_preview_config(local_site):
+    async with AsyncWebCrawler() as crawler:
+        result = await crawler.arun(local_site.url("/"), config=CrawlerRunConfig())
+
+    all_links = result.links["internal"] + result.links["external"]
+    assert all_links
+    assert all(link["head_data"] is None for link in all_links)
+
+
 @pytest.mark.asyncio
 async def test_link_preview():
     config = CrawlerRunConfig(
@@ -144,38 +114,6 @@ async def test_link_preview():
     assert all("head_extraction_status" in il for il in internal_links)
     assert all("head_extraction_error" in il for il in internal_links)
     assert all("total_score" in il for il in internal_links)
-
-@pytest.mark.asyncio
-async def test_css_selector(example_html_url):
-    async with AsyncWebCrawler() as crawler:
-        result = await crawler.arun(
-            url=example_html_url, config=CrawlerRunConfig(
-                css_selector="h1, title"
-            )
-        )
-
-    assert result.success
-    assert (
-        "<h1" in result.cleaned_html
-        and "<title" in result.cleaned_html
-        and "<p" not in result.cleaned_html
-    )
-
-@pytest.mark.asyncio
-async def test_js_code():
-    async with AsyncWebCrawler() as crawler:
-        url = "https://www.nbcnews.com/business"
-
-        result_without_more = await crawler.arun(url=url)
-        result_with_more = await crawler.arun(url=url, config=CrawlerRunConfig(
-            js_code=[
-                "const loadMoreButton = Array.from(document.querySelectorAll('button')).find(button => button.textContent.includes('Load More')); loadMoreButton && loadMoreButton.click();"
-            ]
-        ))
-
-    assert result_with_more.success
-    assert len(result_with_more.markdown) > len(result_without_more.markdown)
-
 
 @pytest.mark.asyncio
 async def test_user_agent():

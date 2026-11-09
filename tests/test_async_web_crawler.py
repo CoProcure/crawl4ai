@@ -1,12 +1,7 @@
 import pytest
 
-from crawl4ai import (
-    AsyncWebCrawler,
-    BrowserConfig,
-    CrawlerRunConfig,
-    MemoryAdaptiveDispatcher,
-    RateLimiter,
-)
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig
+from crawl4ai.async_dispatcher import MemoryAdaptiveDispatcher, RateLimiter
 from tests.helpers import EXAMPLE_URL
 
 
@@ -36,6 +31,47 @@ async def test_arun_many():
             assert item.status_code == 200
             assert item.markdown is not None
             assert item.url in test_urls
+
+@pytest.mark.asyncio
+async def test_arun_many_returns_a_result_for_each_url(local_site):
+    urls = [local_site.url("/"), local_site.url("/about")]
+
+    async with AsyncWebCrawler() as crawler:
+        results = await crawler.arun_many(urls=urls)
+
+    assert isinstance(results, list)
+    assert sorted(result.url for result in results) == sorted(urls)
+    assert all(result.success for result in results)
+    assert all(result.dispatch_result is not None for result in results)
+
+
+@pytest.mark.asyncio
+async def test_robots_parser_allows_public_and_blocks_private_paths(local_site):
+    async with AsyncWebCrawler() as crawler:
+        public_allowed = await crawler.robots_parser.can_fetch(
+            local_site.url("/about"), "bot"
+        )
+        private_allowed = await crawler.robots_parser.can_fetch(
+            local_site.url("/private/page"), "bot"
+        )
+
+    assert public_allowed
+    assert not private_allowed
+
+
+@pytest.mark.asyncio
+async def test_arun_returns_403_for_a_url_blocked_by_robots_txt(local_site):
+    config = CrawlerRunConfig(check_robots_txt=True)
+
+    async with AsyncWebCrawler() as crawler:
+        blocked = await crawler.arun(local_site.url("/private/page"), config=config)
+        allowed = await crawler.arun(local_site.url("/about"), config=config)
+
+    assert not blocked.success
+    assert blocked.status_code == 403
+    assert allowed.success
+    assert allowed.status_code == 200
+
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("viewport", [
@@ -118,31 +154,6 @@ async def test_rate_limiting():
             dispatcher=dispatcher
         )
         assert len(results) == len(urls)
-
-@pytest.mark.asyncio
-async def test_javascript_execution():
-    """Test JavaScript execution capabilities"""
-    browser_config = BrowserConfig(
-        browser_type="chromium",
-        headless=True,
-        java_script_enabled=True
-    )
-    
-    js_code = """
-        document.body.style.backgroundColor = 'red';
-        return document.body.style.backgroundColor;
-    """
-    
-    async with AsyncWebCrawler(config=browser_config) as crawler:
-        result = await crawler.arun(
-            url=EXAMPLE_URL,
-            config=CrawlerRunConfig(
-                js_code=js_code,
-                page_timeout=30000
-            )
-        )
-
-    assert result.success
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("error_url", [

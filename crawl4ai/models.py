@@ -1,12 +1,8 @@
-from pydantic import BaseModel, HttpUrl, PrivateAttr, Field
-from typing import List, Dict, Optional, Callable, Awaitable, Union, Any
-from typing import AsyncGenerator
+from pydantic import BaseModel, PrivateAttr, Field
+from typing import List, Dict, Optional, Union, Any
 from typing import Generic, TypeVar
-from enum import Enum
 from dataclasses import dataclass
-from .ssl_certificate import SSLCertificate
 from datetime import datetime
-from datetime import timedelta
 
 
 ###############################
@@ -35,78 +31,6 @@ class CrawlerTaskResult:
     @property
     def success(self) -> bool:
         return self.result.success
-
-class CrawlStatus(Enum):
-    QUEUED = "QUEUED"
-    IN_PROGRESS = "IN_PROGRESS"
-    COMPLETED = "COMPLETED"
-    FAILED = "FAILED"
-
-@dataclass
-class CrawlStats:
-    task_id: str
-    url: str
-    status: CrawlStatus
-    start_time: Optional[Union[datetime, float]] = None
-    end_time: Optional[Union[datetime, float]] = None
-    memory_usage: float = 0.0
-    peak_memory: float = 0.0
-    error_message: str = ""
-    wait_time: float = 0.0
-    retry_count: int = 0
-    counted_requeue: bool = False
-
-    @property
-    def duration(self) -> str:
-        if not self.start_time:
-            return "0:00"
-            
-        # Convert start_time to datetime if it's a float
-        start = self.start_time
-        if isinstance(start, float):
-            start = datetime.fromtimestamp(start)
-            
-        # Get end time or use current time
-        end = self.end_time or datetime.now()
-        # Convert end_time to datetime if it's a float
-        if isinstance(end, float):
-            end = datetime.fromtimestamp(end)
-            
-        duration = end - start
-        return str(timedelta(seconds=int(duration.total_seconds())))
-
-class DisplayMode(Enum):
-    DETAILED = "DETAILED"
-    AGGREGATED = "AGGREGATED"
-
-
-###############################
-# Crawler Models
-###############################
-@dataclass
-class TokenUsage:
-    completion_tokens: int = 0
-    prompt_tokens: int = 0
-    total_tokens: int = 0
-    completion_tokens_details: Optional[dict] = None
-    prompt_tokens_details: Optional[dict] = None
-
-class UrlModel(BaseModel):
-    url: HttpUrl
-    forced: bool = False
-
-
-
-@dataclass
-class TraversalStats:
-    """Statistics for the traversal process"""
-
-    start_time: datetime = datetime.now()
-    urls_processed: int = 0
-    urls_failed: int = 0
-    urls_skipped: int = 0
-    total_depth_reached: int = 0
-    current_depth: int = 0
 
 class DispatchResult(BaseModel):
     task_id: str
@@ -146,7 +70,6 @@ class CrawlResult(BaseModel):
     session_id: Optional[str] = None
     response_headers: Optional[dict] = None
     status_code: Optional[int] = None
-    ssl_certificate: Optional[SSLCertificate] = None
     dispatch_result: Optional[DispatchResult] = None
     redirected_url: Optional[str] = None
     network_requests: Optional[List[Dict[str, Any]]] = None
@@ -286,12 +209,6 @@ class CrawlResultContainer(Generic[CrawlResultT]):
     def __repr__(self):
         return f"{self.__class__.__name__}({self._results!r})"
 
-RunManyReturn = Union[
-    CrawlResultContainer[CrawlResultT],
-    AsyncGenerator[CrawlResultT, None]
-]
-
-
 # END of backward compatibility code for markdown/markdown_v2.
 # When removing this code in the future, make sure to:
 # 1. Replace the private attribute and property with a standard field
@@ -300,17 +217,8 @@ RunManyReturn = Union[
 class AsyncCrawlResponse(BaseModel):
     html: str
     response_headers: Dict[str, str]
-    js_execution_result: Optional[Dict[str, Any]] = None
     status_code: int
-    screenshot: Optional[str] = None
-    pdf_data: Optional[bytes] = None
-    mhtml_data: Optional[str] = None
-    get_delayed_content: Optional[Callable[[Optional[float]], Awaitable[str]]] = None
-    downloaded_files: Optional[List[str]] = None
-    ssl_certificate: Optional[SSLCertificate] = None
     redirected_url: Optional[str] = None
-    network_requests: Optional[List[Dict[str, Any]]] = None
-    console_messages: Optional[List[Dict[str, Any]]] = None
 
     class Config:
         arbitrary_types_allowed = True
@@ -351,7 +259,6 @@ class Media(BaseModel):
     audios: List[
         MediaItem
     ] = []  # Using MediaItem model for now, can be extended with Audio model if needed
-    tables: List[Dict] = []  # Table data extracted from HTML tables
 
 
 class Links(BaseModel):

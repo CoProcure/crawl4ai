@@ -25,7 +25,6 @@ class LinkPreview:
     - Pattern-based inclusion/exclusion filtering
     - Parallel processing with configurable concurrency
     - Caching for performance
-    - BM25 relevance scoring
     - Memory-safe processing for large link sets
     """
     
@@ -203,10 +202,8 @@ class LinkPreview:
         seeding_config = SeedingConfig(
             extract_head=True,
             concurrency=concurrency,
-            hits_per_sec=getattr(link_config, 'hits_per_sec', None),
-            query=link_config.query,
+            hits_per_sec=None,
             score_threshold=link_config.score_threshold,
-            scoring_method="bm25" if link_config.query else None,
             verbose=verbose
         )
         
@@ -234,7 +231,6 @@ class LinkPreview:
         
         total_urls = len(urls)
         concurrency = link_config.concurrency
-        batch_size = max(1, total_urls // 10)  # Report progress every 10%
         
         # Process URLs and track progress
         completed = 0
@@ -277,122 +273,37 @@ class LinkPreview:
         return results
     
     def _merge_head_data(
-        self, 
-        original_links: Links, 
+        self,
+        original_links: Links,
         head_results: list[dict[str, Any]],
         config: CrawlerRunConfig
     ) -> Links:
-        """
-        Merge head extraction results back into Link objects.
-        
-        Args:
-            original_links: Original Links object
-            head_results: Results from head extraction
-            
-        Returns:
-            Links object with head_data attached to matching links
-        """
-        # Create URL to head_data mapping
-        url_to_head_data = {}
-        for result in head_results:
-            url = result.get("url")
-            if url:
-                url_to_head_data[url] = {
-                    "head_data": result.get("head_data", {}),
-                    "status": result.get("status", "unknown"),
-                    "error": result.get("error"),
-                    "relevance_score": result.get("relevance_score")
-                }
-        
-        # Update internal links
-        updated_internal = []
-        for link in original_links.internal:
-            if link.href in url_to_head_data:
-                head_info = url_to_head_data[link.href]
-                # Create new Link object with head data and scoring
-                contextual_score = head_info.get("relevance_score")
-                
-                updated_link = Link(
-                    href=link.href,
-                    text=link.text,
-                    title=link.title,
-                    base_domain=link.base_domain,
-                    head_data=head_info["head_data"],
-                    head_extraction_status=head_info["status"],
-                    head_extraction_error=head_info.get("error"),
-                    intrinsic_score=getattr(link, 'intrinsic_score', None),
-                    contextual_score=contextual_score
-                )
-                
-                # Add relevance score to head_data for backward compatibility
-                if contextual_score is not None:
-                    updated_link.head_data = updated_link.head_data or {}
-                    updated_link.head_data["relevance_score"] = contextual_score
-                
-                # Calculate total score combining intrinsic and contextual scores
-                updated_link.total_score = calculate_total_score(
-                    intrinsic_score=updated_link.intrinsic_score,
-                    contextual_score=updated_link.contextual_score,
-                    score_links_enabled=getattr(config, 'score_links', False),
-                    query_provided=bool(config.link_preview_config.query)
-                )
-                
-                updated_internal.append(updated_link)
-            else:
-                # Keep original link unchanged
-                updated_internal.append(link)
-        
-        # Update external links
-        updated_external = []
-        for link in original_links.external:
-            if link.href in url_to_head_data:
-                head_info = url_to_head_data[link.href]
-                # Create new Link object with head data and scoring
-                contextual_score = head_info.get("relevance_score")
-                
-                updated_link = Link(
-                    href=link.href,
-                    text=link.text,
-                    title=link.title,
-                    base_domain=link.base_domain,
-                    head_data=head_info["head_data"],
-                    head_extraction_status=head_info["status"],
-                    head_extraction_error=head_info.get("error"),
-                    intrinsic_score=getattr(link, 'intrinsic_score', None),
-                    contextual_score=contextual_score
-                )
-                
-                # Add relevance score to head_data for backward compatibility
-                if contextual_score is not None:
-                    updated_link.head_data = updated_link.head_data or {}
-                    updated_link.head_data["relevance_score"] = contextual_score
-                
-                # Calculate total score combining intrinsic and contextual scores
-                updated_link.total_score = calculate_total_score(
-                    intrinsic_score=updated_link.intrinsic_score,
-                    contextual_score=updated_link.contextual_score,
-                    score_links_enabled=getattr(config, 'score_links', False),
-                    query_provided=bool(config.link_preview_config.query)
-                )
-                
-                updated_external.append(updated_link)
-            else:
-                # Keep original link unchanged
-                updated_external.append(link)
-        
-        # Sort links by relevance score if available
-        if any(hasattr(link, 'head_data') and link.head_data and 'relevance_score' in link.head_data 
-               for link in updated_internal + updated_external):
-            
-            def get_relevance_score(link):
-                if hasattr(link, 'head_data') and link.head_data and 'relevance_score' in link.head_data:
-                    return link.head_data['relevance_score']
-                return 0.0
-            
-            updated_internal.sort(key=get_relevance_score, reverse=True)
-            updated_external.sort(key=get_relevance_score, reverse=True)
-        
+        url_to_head_info = {
+            result["url"]: result for result in head_results if result.get("url")
+        }
+        score_links_enabled = getattr(config, "score_links", False)
+
+        def merge(link: Link) -> Link:
+            head_info = url_to_head_info.get(link.href)
+            if head_info is None:
+                return link
+
+            return Link(
+                href=link.href,
+                text=link.text,
+                title=link.title,
+                base_domain=link.base_domain,
+                head_data=head_info.get("head_data", {}),
+                head_extraction_status=head_info.get("status", "unknown"),
+                head_extraction_error=head_info.get("error"),
+                intrinsic_score=link.intrinsic_score,
+                total_score=calculate_total_score(
+                    intrinsic_score=link.intrinsic_score,
+                    score_links_enabled=score_links_enabled,
+                ),
+            )
+
         return Links(
-            internal=updated_internal,
-            external=updated_external
+            internal=[merge(link) for link in original_links.internal],
+            external=[merge(link) for link in original_links.external],
         )
