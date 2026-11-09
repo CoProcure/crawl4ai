@@ -8,7 +8,6 @@ AsyncLogger = Union['AsyncLoggerType']
 AsyncWebCrawler = Union['AsyncWebCrawlerType']
 CacheMode = Union['CacheModeType']
 CrawlResult = Union['CrawlResultType']
-BrowserProfiler = Union['BrowserProfilerType']
 # NEW: Add AsyncUrlSeederType
 AsyncUrlSeeder = Union['AsyncUrlSeederType']
 
@@ -32,7 +31,6 @@ RoundRobinProxyStrategy = Union['RoundRobinProxyStrategyType']
 
 # Extraction types
 ExtractionStrategy = Union['ExtractionStrategyType']
-CosineStrategy = Union['CosineStrategyType']
 JsonCssExtractionStrategy = Union['JsonCssExtractionStrategyType']
 JsonXPathExtractionStrategy = Union['JsonXPathExtractionStrategyType']
 
@@ -137,7 +135,6 @@ if TYPE_CHECKING:
     from .async_webcrawler import (
         CacheMode as CacheModeType,
     )
-    from .browser_profiler import BrowserProfiler as BrowserProfilerType
 
     # Chunking imports
     from .chunking_strategy import (
@@ -217,10 +214,6 @@ if TYPE_CHECKING:
     )
     from .deep_crawling import (
         URLScorer as URLScorerType,
-    )
-
-    from .extraction_strategy import (
-        CosineStrategy as CosineStrategyType,
     )
 
     # Extraction imports

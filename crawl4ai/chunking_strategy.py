@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 import re
 from collections import Counter
 import string
-from .model_loader import load_nltk_punkt
 
 # Define the abstract base class for chunking strategies
 class ChunkingStrategy(ABC):

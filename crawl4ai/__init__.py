@@ -1,15 +1,6 @@
 # __init__.py
 import warnings
 
-# Adaptive Crawler
-from .adaptive_crawler import (
-    AdaptiveConfig,
-    AdaptiveCrawler,
-    CrawlState,
-    CrawlStrategy,
-    StatisticalStrategy,
-)
-
 # MODIFIED: Add SeedingConfig and VirtualScrollConfig here
 from .async_configs import (
     BrowserConfig,
@@ -40,7 +31,6 @@ from .async_webcrawler import AsyncWebCrawler, CacheMode
 
 # Browser Adapters
 from .browser_adapter import BrowserAdapter, PlaywrightAdapter, UndetectedAdapter
-from .browser_profiler import BrowserProfiler
 from .chunking_strategy import ChunkingStrategy, RegexChunking
 from .components.crawler_monitor import CrawlerMonitor
 from .content_filter_strategy import (
@@ -74,7 +64,6 @@ from .deep_crawling import (
     URLScorer,
 )
 from .extraction_strategy import (
-    CosineStrategy,
     ExtractionStrategy,
     JsonCssExtractionStrategy,
     JsonLxmlExtractionStrategy,
@@ -105,7 +94,6 @@ __all__ = [
     "AsyncLoggerBase",
     "AsyncLogger",
     "AsyncWebCrawler",
-    "BrowserProfiler",
     "LLMConfig",
     "GeolocationConfig",
     # NEW: Add SeedingConfig and VirtualScrollConfig
@@ -113,12 +101,6 @@ __all__ = [
     "VirtualScrollConfig",
     # NEW: Add AsyncUrlSeeder
     "AsyncUrlSeeder",
-    # Adaptive Crawler
-    "AdaptiveCrawler",
-    "AdaptiveConfig", 
-    "CrawlState",
-    "CrawlStrategy",
-    "StatisticalStrategy",
     "DeepCrawlStrategy",
     "BFSDeepCrawlStrategy",
     "BestFirstCrawlingStrategy",
@@ -147,7 +129,6 @@ __all__ = [
     "CrawlerRunConfig",
     "HTTPCrawlerConfig",
     "ExtractionStrategy",
-    "CosineStrategy",
     "JsonCssExtractionStrategy",
     "JsonXPathExtractionStrategy",
     "JsonLxmlExtractionStrategy",
