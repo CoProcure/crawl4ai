@@ -58,9 +58,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
 
     This is the primary scraping strategy in Crawl4AI, providing high-performance
     HTML parsing and content extraction using the lxml library.
-
-    Note: WebScrapingStrategy is now an alias for this class to maintain
-    backward compatibility.
     """
 
     def __init__(self, cache_client: CacheClient = NoCacheClient(), logger=None):
@@ -542,12 +539,6 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
                     if img.getparent() is not None:
                         img.getparent().remove(img)
 
-            # Add comment removal
-            if kwargs.get("remove_comments", False):
-                comments = body.xpath("//comment()")
-                for comment in comments:
-                    comment.getparent().remove(comment)
-
             # Handle tag-based removal first
             excluded_tags = set(kwargs.get("excluded_tags", []) or [])
             if excluded_tags:
@@ -662,20 +653,14 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
                     ]
                     links_obj = Links(internal=internal_links, external=external_links)
 
-                    # Create a config object for LinkPreview
-                    class TempCrawlerRunConfig:
-                        def __init__(self, link_config, score_links):
-                            self.link_preview_config = link_config
-                            self.score_links = score_links
-
-                    config = TempCrawlerRunConfig(
-                        link_preview_config, kwargs.get("score_links", False)
-                    )
-
                     # Extract head content (run async operation in sync context)
                     async def extract_links():
                         async with LinkPreview(self.cache_client, self.logger) as extractor:
-                            return await extractor.extract_link_heads(links_obj, config)
+                            return await extractor.extract_link_heads(
+                                links_obj,
+                                link_preview_config,
+                                kwargs.get("score_links", False),
+                            )
 
                     # Run the async operation
                     try:
@@ -775,6 +760,3 @@ class LXMLWebScrapingStrategy(ContentScrapingStrategy):
                 "metadata": {},
             }
 
-
-# Backward compatibility alias
-WebScrapingStrategy = LXMLWebScrapingStrategy

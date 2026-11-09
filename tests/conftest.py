@@ -4,9 +4,13 @@ from dataclasses import dataclass
 
 import pytest
 
-HOME_HTML = """<html><head><title>Home Page</title></head><body>
+HOME_HTML = """<html><head><title>Home Page</title>
+<meta name="description" content="The home page">
+<meta name="keywords" content="home, welcome">
+</head><body>
 <h1>Welcome</h1>
 <p>{words}</p>
+<img src="/team.png" alt="Our team" width="400" height="300">
 <a href="/about" title="About us">About us</a>
 <a href="/contact">Contact</a>
 <a href="https://external.example.org/page">External</a>

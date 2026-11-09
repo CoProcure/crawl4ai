@@ -139,52 +139,6 @@ class BrowserConfig:
         self.browser_hint = generate_client_hints(self.user_agent)
         self.headers.setdefault("sec-ch-ua", self.browser_hint)
 
-    @staticmethod
-    def from_kwargs(kwargs: dict) -> "BrowserConfig":
-        return BrowserConfig(
-            browser_type=kwargs.get("browser_type", "chromium"),
-            headless=kwargs.get("headless", True),
-            chrome_channel=kwargs.get("chrome_channel", "chromium"),
-            proxy=kwargs.get("proxy"),
-            proxy_config=kwargs.get("proxy_config", None),
-            viewport_width=kwargs.get("viewport_width", 1080),
-            viewport_height=kwargs.get("viewport_height", 600),
-            ignore_https_errors=kwargs.get("ignore_https_errors", True),
-            java_script_enabled=kwargs.get("java_script_enabled", True),
-            cookies=kwargs.get("cookies", []),
-            headers=kwargs.get("headers", {}),
-            user_agent=kwargs.get(
-                "user_agent",
-                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36",
-            ),
-            extra_args=kwargs.get("extra_args", []),
-        )
-
-    def to_dict(self):
-        return {
-            "browser_type": self.browser_type,
-            "headless": self.headless,
-            "chrome_channel": self.chrome_channel,
-            "proxy": self.proxy,
-            "proxy_config": self.proxy_config,
-            "viewport_width": self.viewport_width,
-            "viewport_height": self.viewport_height,
-            "ignore_https_errors": self.ignore_https_errors,
-            "java_script_enabled": self.java_script_enabled,
-            "cookies": self.cookies,
-            "headers": self.headers,
-            "user_agent": self.user_agent,
-            "extra_args": self.extra_args,
-            "sleep_on_close": self.sleep_on_close,
-            "verbose": self.verbose,
-        }
-
-    def clone(self, **kwargs):
-        config_dict = self.to_dict()
-        config_dict.update(kwargs)
-        return BrowserConfig.from_kwargs(config_dict)
-
 
 class LinkPreviewConfig:
     def __init__(
@@ -250,11 +204,6 @@ class LinkPreviewConfig:
             "verbose": self.verbose,
         }
 
-    def clone(self, **kwargs) -> "LinkPreviewConfig":
-        config_dict = self.to_dict()
-        config_dict.update(kwargs)
-        return LinkPreviewConfig.from_dict(config_dict)
-
 
 class CrawlerRunConfig:
     def __init__(
@@ -283,7 +232,6 @@ class CrawlerRunConfig:
         exclude_external_links: bool = False,
         exclude_social_media_links: bool = False,
         exclude_domains: list = None,
-        exclude_internal_links: bool = False,
         score_links: bool = False,
         verbose: bool = True,
         url: str = None,
@@ -324,7 +272,6 @@ class CrawlerRunConfig:
         self.exclude_external_links = exclude_external_links
         self.exclude_social_media_links = exclude_social_media_links
         self.exclude_domains = exclude_domains or []
-        self.exclude_internal_links = exclude_internal_links
         self.score_links = score_links
 
         self.verbose = verbose
@@ -340,9 +287,6 @@ class CrawlerRunConfig:
             self.link_preview_config = LinkPreviewConfig.from_dict(link_preview_config)
         else:
             raise ValueError("link_preview_config must be LinkPreviewConfig object or dict")
-
-    def __getattr__(self, name):
-        raise AttributeError(f"'{self.__class__.__name__}' has no attribute '{name}'")
 
     @staticmethod
     def from_kwargs(kwargs: dict) -> "CrawlerRunConfig":
@@ -360,7 +304,7 @@ class CrawlerRunConfig:
             cache_client=kwargs.get("cache_client", None),
             cache_ttl_seconds=kwargs.get("cache_ttl_seconds", DEFAULT_CACHE_TTL_SECONDS),
             wait_until=kwargs.get("wait_until", "domcontentloaded"),
-            page_timeout=kwargs.get("page_timeout", 60000),
+            page_timeout=kwargs.get("page_timeout", PAGE_TIMEOUT),
             delay_before_return_html=kwargs.get("delay_before_return_html", 0.1),
             ignore_body_visibility=kwargs.get("ignore_body_visibility", True),
             image_description_min_word_threshold=kwargs.get(
@@ -378,7 +322,6 @@ class CrawlerRunConfig:
             exclude_external_links=kwargs.get("exclude_external_links", False),
             exclude_social_media_links=kwargs.get("exclude_social_media_links", False),
             exclude_domains=kwargs.get("exclude_domains", []),
-            exclude_internal_links=kwargs.get("exclude_internal_links", False),
             score_links=kwargs.get("score_links", False),
             verbose=kwargs.get("verbose", True),
             check_robots_txt=kwargs.get("check_robots_txt", False),
@@ -413,7 +356,6 @@ class CrawlerRunConfig:
             "exclude_external_links": self.exclude_external_links,
             "exclude_social_media_links": self.exclude_social_media_links,
             "exclude_domains": self.exclude_domains,
-            "exclude_internal_links": self.exclude_internal_links,
             "score_links": self.score_links,
             "verbose": self.verbose,
             "check_robots_txt": self.check_robots_txt,

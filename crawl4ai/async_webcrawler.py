@@ -61,9 +61,6 @@ class AsyncWebCrawler:
             logger=self.logger,
         )
 
-        self.crawl4ai_folder = os.path.join(base_directory, ".crawl4ai")
-        os.makedirs(self.crawl4ai_folder, exist_ok=True)
-
         self.robots_parser = RobotsParser(cache_client=cache_client)
 
         self.ready = False
@@ -129,11 +126,7 @@ class AsyncWebCrawler:
 
             t1 = time.perf_counter()
 
-            if config.user_agent:
-                self.crawler_strategy.update_user_agent(
-                    config.user_agent)
-
-            if config and config.check_robots_txt:
+            if config.check_robots_txt:
                 if not await self.robots_parser.can_fetch(
                     url, self.browser_config.user_agent
                 ):

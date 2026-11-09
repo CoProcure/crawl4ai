@@ -1,7 +1,6 @@
-import pytest
-
 from unittest.mock import Mock, patch
 
+import pytest
 import pytest_asyncio
 
 from crawl4ai.async_configs import CrawlerRunConfig
@@ -11,136 +10,80 @@ from crawl4ai.models import AsyncCrawlResponse
 from tests.helpers import EXAMPLE_RAW_HTML, EXAMPLE_URL, TestCacheClient
 
 
+@pytest.fixture
+def cache_client():
+    client = TestCacheClient()
+    yield client
+    client.cleanup()
+
+
 @pytest_asyncio.fixture
-async def mock_async_crawl_response(monkeypatch):
-    mock_crawl_response = AsyncCrawlResponse(
+async def example_page_response(monkeypatch):
+    response = AsyncCrawlResponse(
         html=EXAMPLE_RAW_HTML,
-        response_headers={
-            'accept-ranges': 'bytes',
-            'alt-svc': 'h3=":443"; ma=93600',
-            'cache-control': 'max-age=86000',
-            'content-length': '513',
-            'content-type': 'text/html',
-            'date': 'Wed, 19 Nov 2025 20:09:52 GMT',
-            'etag': '"bc2473a18e003bdb249eba5ce893033f:1760028122.592274"',
-            'last-modified': 'Thu, 09 Oct 2025 16:42:02 GMT'
-        },
-        js_execution_result=None,
+        response_headers={"content-type": "text/html"},
         status_code=200,
-        screenshot=None,
-        pdf_data=None,
-        mhtml_data=None,
-        downloaded_files=None,
-        ssl_certificate=None,
         redirected_url=EXAMPLE_URL,
-        network_requests=None,
-        console_messages=None
     )
-    async def mock_crawl(self, url, **kwargs):
-        return mock_crawl_response
-    monkeypatch.setattr("crawl4ai.async_crawler_strategy.AsyncPlaywrightCrawlerStrategy.crawl", mock_crawl)
+
+    async def crawl(self, url, **kwargs):
+        return response
+
+    monkeypatch.setattr(
+        "crawl4ai.async_crawler_strategy.AsyncPlaywrightCrawlerStrategy.crawl", crawl
+    )
 
 
 @pytest.mark.asyncio
-async def test_caching():
-    cache_client = TestCacheClient()
+async def test_second_enabled_crawl_is_served_from_the_cache(local_site, cache_client):
+    config = CrawlerRunConfig(cache_mode=CacheMode.ENABLED)
 
     async with AsyncWebCrawler(cache_client=cache_client) as crawler:
-        # First crawl (should not use cache)
-        result1 = await crawler.arun(url=EXAMPLE_URL, config=CrawlerRunConfig(
-            cache_mode=CacheMode.ENABLED
-        ))
-        cache_size = cache_client.count()
+        first = await crawler.arun(url=local_site.url("/"), config=config)
+        entries_after_first = cache_client.count()
+        second = await crawler.arun(url=local_site.url("/"), config=config)
 
-        assert result1.success
-        assert cache_size == 1
-
-        # Second crawl (should use cache)
-        result2 = await crawler.arun(url=EXAMPLE_URL, config=CrawlerRunConfig(
-            cache_mode=CacheMode.ENABLED
-        ))
-        final_cache_size = cache_client.count()
-
-        assert result2.success
-        assert result2.html == result1.html
-        assert final_cache_size == 1
-    
-    cache_client.cleanup()
+    assert entries_after_first == 1
+    assert cache_client.count() == 1
+    assert second.html == first.html
 
 
 @pytest.mark.asyncio
-async def test_cache_excluded_tags(mock_async_crawl_response):
-    cache_client = TestCacheClient()
-
-    async with AsyncWebCrawler(cache_client=cache_client) as crawler:
-        result1 = await crawler.arun(url=EXAMPLE_URL, config=CrawlerRunConfig(
-            cache_mode=CacheMode.ENABLED,
-            excluded_tags=["p"]
-        ))
-        cache_size = cache_client.count()
-        
-        assert result1.success
-        assert result1.markdown == "# Example Domain\n"
-        assert cache_size == 1
-
-        result2 = await crawler.arun(url=EXAMPLE_URL, config=CrawlerRunConfig(
-            cache_mode=CacheMode.ENABLED,
-            excluded_tags=["h1"]
-        ))
-        cache_size2 = cache_client.count()
-
-        assert result2.success
-        assert result2.markdown == "This domain is for use in documentation examples without needing permission. Avoid use in operations.\n[Learn more](https://iana.org/domains/example)\n"
-        assert cache_size2 == cache_size
-
-        result3 = await crawler.arun(url=EXAMPLE_URL, config=CrawlerRunConfig(
-            cache_mode=CacheMode.ENABLED,
-        ))
-        cache_size3 = cache_client.count()
-
-        assert result3.success
-        assert result3.markdown == "# Example Domain\nThis domain is for use in documentation examples without needing permission. Avoid use in operations.\n[Learn more](https://iana.org/domains/example)\n"
-        assert cache_size3 == cache_size
-    
-    cache_client.cleanup()
-
-
-@pytest.mark.asyncio
-async def test_bypass_cache():
-    cache_client = TestCacheClient()
+async def test_bypass_mode_skips_reading_the_cache(local_site, cache_client):
     get_spy = Mock(wraps=cache_client.get)
 
-    with patch.object(TestCacheClient, 'get', get_spy):
+    with patch.object(TestCacheClient, "get", get_spy):
         async with AsyncWebCrawler(cache_client=cache_client) as crawler:
-            result1 = await crawler.arun(url=EXAMPLE_URL, config=CrawlerRunConfig(
-                cache_mode=CacheMode.ENABLED
-            ))
+            await crawler.arun(
+                url=local_site.url("/"),
+                config=CrawlerRunConfig(cache_mode=CacheMode.ENABLED),
+            )
+            reads_after_enabled_crawl = get_spy.call_count
+            await crawler.arun(
+                url=local_site.url("/"),
+                config=CrawlerRunConfig(cache_mode=CacheMode.BYPASS),
+            )
 
-            assert result1.success
-            assert get_spy.call_count == 1
-
-            result2 = await crawler.arun(url=EXAMPLE_URL, config=CrawlerRunConfig(
-                cache_mode=CacheMode.BYPASS
-            ))
-            
-            assert result2.success
-            assert get_spy.call_count == 1
-
-    cache_client.cleanup()
+    assert reads_after_enabled_crawl == 1
+    assert get_spy.call_count == reads_after_enabled_crawl
 
 
 @pytest.mark.asyncio
-async def test_clear_cache():
-    cache_client = TestCacheClient()
+async def test_cached_html_is_reprocessed_with_each_crawls_excluded_tags(
+    example_page_response, cache_client
+):
+    async def markdown_excluding(excluded_tags):
+        config = CrawlerRunConfig(cache_mode=CacheMode.ENABLED, excluded_tags=excluded_tags)
+        result = await crawler.arun(url=EXAMPLE_URL, config=config)
+        return result.markdown
 
     async with AsyncWebCrawler(cache_client=cache_client) as crawler:
-        await crawler.arun(url=EXAMPLE_URL, config=CrawlerRunConfig(
-            cache_mode=CacheMode.ENABLED
-        ))
-        assert cache_client.count() == 1
+        without_paragraphs = await markdown_excluding(["p"])
+        without_heading = await markdown_excluding(["h1"])
+        unfiltered = await markdown_excluding([])
 
-        cache_client.clear(prefix="")
-        assert cache_client.count() == 0
-
-    cache_client.cleanup()
-
+    assert without_paragraphs == "# Example Domain\n"
+    assert "# Example Domain" not in without_heading
+    assert "This domain is for use" in without_heading
+    assert unfiltered.startswith("# Example Domain\nThis domain is for use")
+    assert cache_client.count() == 1

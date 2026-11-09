@@ -171,8 +171,6 @@ class DefaultMarkdownGenerator(MarkdownGenerationStrategy):
                 raw_markdown=raw_markdown or "",
                 markdown_with_citations=markdown_with_citations or "",
                 references_markdown=references_markdown or "",
-                fit_markdown="",
-                fit_html="",
             )
         except Exception as e:
             # If anything fails, return empty strings with error message
@@ -181,6 +179,4 @@ class DefaultMarkdownGenerator(MarkdownGenerationStrategy):
                 raw_markdown=error_msg,
                 markdown_with_citations=error_msg,
                 references_markdown="",
-                fit_markdown="",
-                fit_html="",
             )

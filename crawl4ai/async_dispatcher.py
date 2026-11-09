@@ -83,8 +83,6 @@ class RateLimiter:
 class BaseDispatcher(ABC):
     def __init__(self, rate_limiter: RateLimiter | None = None):
         self.crawler = None
-        self._domain_last_hit: dict[str, float] = {}
-        self.concurrent_sessions = 0
         self.rate_limiter = rate_limiter
 
     @abstractmethod
@@ -178,8 +176,6 @@ class MemoryAdaptiveDispatcher(BaseDispatcher):
         start_memory = process.memory_info().rss / (1024 * 1024)
 
         try:
-            self.concurrent_sessions += 1
-
             if self.rate_limiter:
                 await self.rate_limiter.wait_if_needed(url)
 
@@ -223,7 +219,6 @@ class MemoryAdaptiveDispatcher(BaseDispatcher):
 
         finally:
             end_time = time.time()
-            self.concurrent_sessions -= 1
 
         return CrawlerTaskResult(
             task_id=task_id,

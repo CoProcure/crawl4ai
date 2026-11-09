@@ -67,7 +67,6 @@ class AsyncPlaywrightCrawlerStrategy(AsyncCrawlerStrategy):
 
     async def close(self):
         await self.browser_manager.close()
-        BrowserManager._playwright_instance = None
 
     def set_hook(self, hook_type: str, hook: Callable):
         if hook_type in self.hooks:
@@ -82,9 +81,6 @@ class AsyncPlaywrightCrawlerStrategy(AsyncCrawlerStrategy):
                 return await hook(*args, **kwargs)
             return hook(*args, **kwargs)
         return args[0] if args else None
-
-    def update_user_agent(self, user_agent: str):
-        self.user_agent = user_agent
 
     def set_custom_headers(self, headers: dict[str, str]):
         self.headers = headers

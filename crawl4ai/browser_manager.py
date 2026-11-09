@@ -8,8 +8,6 @@ from .async_configs import BrowserConfig, CrawlerRunConfig
 
 
 class BrowserManager:
-    _playwright_instance = None
-
     def __init__(self, browser_config: BrowserConfig, logger=None):
         self.config: BrowserConfig = browser_config
         self.logger = logger

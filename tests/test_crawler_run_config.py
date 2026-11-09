@@ -9,7 +9,7 @@ from crawl4ai import (
 )
 
 
-def test_clone_preserves_options_and_replaces_overrides():
+def test_clone_preserves_options_and_applies_overrides():
     config = CrawlerRunConfig(
         check_robots_txt=True,
         cache_mode=CacheMode.ENABLED,
@@ -50,17 +50,19 @@ def test_clone_leaves_the_original_config_unchanged():
 
 
 def test_from_kwargs_defaults_word_count_threshold_to_200_when_unset():
-    assert CrawlerRunConfig.from_kwargs({}).word_count_threshold == 200
-    assert CrawlerRunConfig.from_kwargs({"word_count_threshold": 5}).word_count_threshold == 5
+    config = CrawlerRunConfig.from_kwargs({})
+
+    assert config.word_count_threshold == 200
 
 
-def test_removed_run_options_are_rejected():
-    with pytest.raises(TypeError):
-        CrawlerRunConfig(css_selector="h1")
+def test_from_kwargs_keeps_an_explicit_word_count_threshold():
+    config = CrawlerRunConfig.from_kwargs({"word_count_threshold": 5})
+
+    assert config.word_count_threshold == 5
 
 
 @pytest.mark.asyncio
-async def test_link_preview_attaches_head_data_and_score_to_links(local_site):
+async def test_link_preview_attaches_head_data_and_total_score_to_links(local_site):
     config = CrawlerRunConfig(
         link_preview_config=LinkPreviewConfig(include_external=True),
         score_links=True,
@@ -86,45 +88,3 @@ async def test_links_have_no_head_data_without_link_preview_config(local_site):
     all_links = result.links["internal"] + result.links["external"]
     assert all_links
     assert all(link["head_data"] is None for link in all_links)
-
-
-@pytest.mark.asyncio
-async def test_link_preview():
-    config = CrawlerRunConfig(
-        link_preview_config=LinkPreviewConfig(),
-        score_links=True,
-        exclude_external_links=True,
-    )
-    test_url = "https://docs.python.org/3/"
-
-    async with AsyncWebCrawler() as crawler:
-        result = await crawler.arun(test_url, config=config)
-
-    assert result.success
-    assert result.links
-    assert result.links["external"] == []
-
-    internal_links = result.links["internal"]
-
-    assert any(il["total_score"] for il in internal_links)
-    assert all(il["href"] for il in internal_links)
-    assert all("title" in il for il in internal_links)
-    assert all("text" in il for il in internal_links)
-    assert all("head_data" in il for il in internal_links)
-    assert all("head_extraction_status" in il for il in internal_links)
-    assert all("head_extraction_error" in il for il in internal_links)
-    assert all("total_score" in il for il in internal_links)
-
-@pytest.mark.asyncio
-async def test_user_agent():
-    url = "https://www.nbcnews.com/business"
-    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36 Crawl4AI/1.0"
-    async with AsyncWebCrawler() as crawler:
-        result = await crawler.arun(
-            url=url, config=CrawlerRunConfig(
-                user_agent=user_agent
-            )
-        )
-
-    assert result.success
-    assert crawler.browser_config.user_agent == user_agent

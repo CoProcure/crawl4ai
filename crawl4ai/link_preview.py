@@ -10,7 +10,7 @@ from typing import Any
 
 from crawl4ai.cache_client import CacheClient, NoCacheClient
 
-from .async_configs import CrawlerRunConfig
+from .async_configs import LinkPreviewConfig
 from .async_logger import AsyncLogger
 from .async_url_seeder import AsyncUrlSeeder
 from .models import Link, Links
@@ -38,7 +38,6 @@ class LinkPreview:
         self.cache_client = cache_client
         self.logger = logger
         self.seeder: AsyncUrlSeeder | None = None
-        self._owns_seeder = False
     
     async def __aenter__(self):
         """Async context manager entry."""
@@ -54,14 +53,12 @@ class LinkPreview:
         if not self.seeder:
             self.seeder = AsyncUrlSeeder(cache_client=self.cache_client, logger=self.logger)
             await self.seeder.__aenter__()
-            self._owns_seeder = True
     
     async def close(self):
         """Clean up resources."""
-        if self.seeder and self._owns_seeder:
+        if self.seeder:
             await self.seeder.__aexit__(None, None, None)
             self.seeder = None
-            self._owns_seeder = False
     
     def _log(self, level: str, message: str, tag: str = "LINK_EXTRACT", **kwargs):
         """Helper method to safely log messages."""
@@ -72,21 +69,19 @@ class LinkPreview:
     
     async def extract_link_heads(
         self, 
-        links: Links, 
-        config: CrawlerRunConfig
+        links: Links,
+        link_config: LinkPreviewConfig,
+        score_links: bool,
     ) -> Links:
         """
         Extract head content for filtered links and attach to Link objects.
         
         Args:
             links: Links object containing internal and external links
-            config: CrawlerRunConfig with link_preview_config settings
             
         Returns:
             Links object with head_data attached to filtered Link objects
         """
-        link_config = config.link_preview_config
-        
         # Ensure seeder is initialized
         await self.start()
         
@@ -104,14 +99,14 @@ class LinkPreview:
         head_results = await self._extract_heads_parallel(filtered_urls, link_config)
         
         # Merge results back into Link objects
-        updated_links = self._merge_head_data(links, head_results, config)
+        updated_links = self._merge_head_data(links, head_results, score_links)
         
         self._log("info", "Completed head extraction for links, {success} successful",
                   params={"success": len([r for r in head_results if r.get("status") == "valid"])})
         
         return updated_links
     
-    def _filter_links(self, links: Links, link_config: dict[str, Any]) -> list[str]:
+    def _filter_links(self, links: Links, link_config: LinkPreviewConfig) -> list[str]:
         """
         Filter links based on configuration parameters.
         
@@ -179,7 +174,7 @@ class LinkPreview:
     async def _extract_heads_parallel(
         self,
         urls: list[str],
-        link_config: dict[str, Any]
+        link_config: LinkPreviewConfig
     ) -> list[dict[str, Any]]:
         concurrency = link_config.concurrency
 
@@ -210,12 +205,11 @@ class LinkPreview:
         self,
         original_links: Links,
         head_results: list[dict[str, Any]],
-        config: CrawlerRunConfig
+        score_links: bool,
     ) -> Links:
         url_to_head_info = {
             result["url"]: result for result in head_results if result.get("url")
         }
-        score_links_enabled = getattr(config, "score_links", False)
 
         def merge(link: Link) -> Link:
             head_info = url_to_head_info.get(link.href)
@@ -233,7 +227,7 @@ class LinkPreview:
                 intrinsic_score=link.intrinsic_score,
                 total_score=calculate_total_score(
                     intrinsic_score=link.intrinsic_score,
-                    score_links_enabled=score_links_enabled,
+                    score_links_enabled=score_links,
                 ),
             )
 
